@@ -119,8 +119,8 @@ class AsyncScraper:
             context = await self._get_available_context()
             page = await context.new_page()
             try:
-                await page.goto(url, wait_until="domcontentloaded", timeout=12500)  # Reduced timeout
-                await page.wait_for_selector("article", timeout=12500)
+                await page.goto(url, wait_until="domcontentloaded", timeout=15000)  # Reduced timeout
+                await page.wait_for_selector("article", timeout=15000)
                 # Removed image navigation clicking - just get the current page content
                 
                 html = await page.content()
@@ -245,9 +245,8 @@ async def process_txt_async(
     concurrency: int = 5,
 ) -> str | None:
     """
-    Stream-safe alternative to the original implementation.
-    Writes each scraped URL (success or error) immediately, so a crash
-    costs at most the handful of URLs still running in the executor.
+    Stream-safe alternative to the original implementation,
+    with per-URL tqdm progress bar.
     """
     year_month = txt_path.stem
     out_file = out_dir / f"{year_month}.jsonl"
@@ -255,7 +254,7 @@ async def process_txt_async(
 
     logger.info(f"Processing {txt_path.name}…")
 
-    # ── read URLs ───────────────────────────────────────────────────────────
+    # Read URLs
     try:
         urls = [ln.strip() for ln in txt_path.read_text().splitlines() if ln.strip()]
     except Exception as e:
@@ -268,31 +267,32 @@ async def process_txt_async(
 
     success_count = error_count = 0
 
-    # ── scraper context ─────────────────────────────────────────────────────
     async with AsyncScraper(concurrency=concurrency) as scraper, \
-        aiofiles.open(out_file, "a", encoding="utf-8") as ok_f, \
-        aiofiles.open(err_file, "a", encoding="utf-8") as er_f:
+               aiofiles.open(out_file, "a", encoding="utf-8") as ok_f, \
+               aiofiles.open(err_file, "a", encoding="utf-8") as er_f:
 
-        scrape_tasks: List[asyncio.Task[Any]] = [
-            asyncio.create_task(scraper.scrape_single_url(u)) for u in urls
-        ]
+        # Kick off all scrapes
+        scrape_tasks = [asyncio.create_task(scraper.scrape_single_url(u)) for u in urls]
 
-        # use as_completed so we stream results the moment they finish
-        for coro in asyncio.as_completed(scrape_tasks):
-            item = await coro
+        # Wrap the completion iterator in tqdm
+        with tqdm(
+            total=len(scrape_tasks),
+            desc=f"Scraping URLs in {txt_path.name}",
+            unit="url",
+            leave=False
+        ) as pbar:
+            for coro in asyncio.as_completed(scrape_tasks):
+                item = await coro
 
-            try:
-                # ── classify result ──────────────────────────────────────
-                is_error = (
-                    isinstance(item, tuple)
-                    and item
-                    and item[0] == "ERROR"
-                )
-
+                # Determine which file to write to
+                is_error = isinstance(item, tuple) and item and item[0] == "ERROR"
                 target_f = er_f if is_error else ok_f
+
+                # Write & flush
                 await target_f.write(json.dumps(item, default=str) + "\n")
                 await target_f.flush()
 
+                # Logging and counters
                 if is_error:
                     error_count += 1
                     _, bad_url, msg, _tb = item
@@ -300,9 +300,9 @@ async def process_txt_async(
                 else:
                     success_count += 1
                     logger.debug(f"Saved {item['article_url']}")
-            except Exception as w:
-                # If writing fails we still want to see why
-                logger.error(f"Write-stream failure: {w}", exc_info=True)
+
+                # Advance the progress bar
+                pbar.update(1)
 
     logger.info(
         f"Completed {txt_path.name}: {success_count} ok, {error_count} errors"
@@ -334,7 +334,7 @@ def main():
     logger.info(f"Found {len(txt_files)} files to process")
 
     # Process files one by one (you can modify this to process multiple files concurrently if needed)
-    for txt_file in tqdm(txt_files, desc="Processing files"):
+    for txt_file in tqdm(txt_files, desc="Processing urls"):
         try:
             result = asyncio.run(process_txt_async(txt_file, OUT_DIR, ERR_DIR, CONCURRENCY))
             if result:
