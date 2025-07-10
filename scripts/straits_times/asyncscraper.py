@@ -1,4 +1,4 @@
-import re
+import aiofiles                 # NEW  ──────── async file I/O
 from urllib.parse import urljoin
 from bs4 import BeautifulSoup, Tag
 from dateutil import parser as dateparser
@@ -8,6 +8,7 @@ from tqdm.auto import tqdm
 from openai import OpenAI
 from playwright.async_api import async_playwright, Browser, BrowserContext
 from ...utils.logger import logger  # Ensure this logger is configured
+import random
 
 
 class AsyncScraper:
@@ -114,11 +115,12 @@ class AsyncScraper:
             raise RuntimeError("Browser not started. Use 'async with'.")
         
         async with self.semaphore:
+            await asyncio.sleep(random.uniform(0.1, 0.75))
             context = await self._get_available_context()
             page = await context.new_page()
             try:
-                await page.goto(url, wait_until="domcontentloaded", timeout=10000)  # Reduced timeout
-                
+                await page.goto(url, wait_until="domcontentloaded", timeout=12500)  # Reduced timeout
+                await page.wait_for_selector("article", timeout=12500)
                 # Removed image navigation clicking - just get the current page content
                 
                 html = await page.content()
@@ -136,9 +138,12 @@ class AsyncScraper:
         logger.debug(f"Starting scrape for URL: {url}")
         
         try:
-            soup = await self._fetch_page_content(url)
-            if not soup:
-                raise RuntimeError(f"Failed to fetch content from {url}")
+            max_retries = 2
+            for attempt in range(max_retries):
+                soup = await self._fetch_page_content(url)
+                if soup and soup.find("article"):
+                    break
+                logger.info(f"Retrying {url} (attempt {attempt+2}/{max_retries+1})")
                 
             article = soup.find("article")
             if not article:
@@ -224,26 +229,33 @@ class AsyncScraper:
         """Scrape multiple URLs concurrently"""
         logger.info(f"Starting batch scrape of {len(urls)} URLs")
         
-        tasks = [self.scrape_single_url(url) for url in urls]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        
+        tasks = []
+        for url in urls:
+            await asyncio.sleep(0.15)   # 200 ms between task-spawns
+            tasks.append(self.scrape_single_url(url))
+        results = await asyncio.gather(*tasks)
         logger.info(f"Completed batch scrape of {len(urls)} URLs")
         return results
-
+    
 
 async def process_txt_async(
-    txt_path: pathlib.Path, 
-    out_dir: pathlib.Path, 
-    err_dir: pathlib.Path, 
-    concurrency: int = 5
-):
-    """Process a single txt file with URLs using async Playwright scraper"""
+    txt_path: pathlib.Path,
+    out_dir: pathlib.Path,
+    err_dir: pathlib.Path,
+    concurrency: int = 5,
+) -> str | None:
+    """
+    Stream-safe alternative to the original implementation.
+    Writes each scraped URL (success or error) immediately, so a crash
+    costs at most the handful of URLs still running in the executor.
+    """
     year_month = txt_path.stem
     out_file = out_dir / f"{year_month}.jsonl"
     err_file = err_dir / f"{year_month}_errors.jsonl"
 
-    logger.info(f"Processing {txt_path.name}...")
+    logger.info(f"Processing {txt_path.name}…")
 
+    # ── read URLs ───────────────────────────────────────────────────────────
     try:
         urls = [ln.strip() for ln in txt_path.read_text().splitlines() if ln.strip()]
     except Exception as e:
@@ -254,38 +266,47 @@ async def process_txt_async(
         logger.warning(f"No URLs found in {txt_path.name}")
         return year_month
 
-    # Create and use scraper
-    async with AsyncScraper(concurrency=concurrency) as scraper:
-        results = await scraper.scrape_urls_batch(urls)
+    success_count = error_count = 0
 
-    # Process results
-    success_count = 0
-    error_count = 0
+    # ── scraper context ─────────────────────────────────────────────────────
+    async with AsyncScraper(concurrency=concurrency) as scraper, \
+        aiofiles.open(out_file, "a", encoding="utf-8") as ok_f, \
+        aiofiles.open(err_file, "a", encoding="utf-8") as er_f:
 
-    try:
-        with out_file.open("w", encoding="utf-8") as ok_f, err_file.open("w", encoding="utf-8") as er_f:
-            for item in results:
-                if isinstance(item, Exception):
-                    logger.error(f"Unknown exception occurred: {item}")
-                    json.dump({"url": "unknown", "error": repr(item), "traceback": traceback.format_exc()}, er_f)
-                    er_f.write("\n")
+        scrape_tasks: List[asyncio.Task[Any]] = [
+            asyncio.create_task(scraper.scrape_single_url(u)) for u in urls
+        ]
+
+        # use as_completed so we stream results the moment they finish
+        for coro in asyncio.as_completed(scrape_tasks):
+            item = await coro
+
+            try:
+                # ── classify result ──────────────────────────────────────
+                is_error = (
+                    isinstance(item, tuple)
+                    and item
+                    and item[0] == "ERROR"
+                )
+
+                target_f = er_f if is_error else ok_f
+                await target_f.write(json.dumps(item, default=str) + "\n")
+                await target_f.flush()
+
+                if is_error:
                     error_count += 1
-                elif isinstance(item, tuple) and item and item[0] == "ERROR":
-                    _, url, msg, tb = item
-                    logger.error(f"Error processing URL {url}: {msg}")
-                    json.dump({"url": url, "error": msg, "traceback": tb}, er_f)
-                    er_f.write("\n")
-                    error_count += 1
+                    _, bad_url, msg, _tb = item
+                    logger.error(f"Error scraping {bad_url}: {msg}")
                 else:
-                    logger.debug(f"Writing successful result for {item['article_url']}")
-                    json.dump(item, ok_f, default=str)
-                    ok_f.write("\n")
                     success_count += 1
-    except Exception as e:
-        logger.error(f"Error writing output files for {year_month}: {e}", exc_info=True)
-        return None
+                    logger.debug(f"Saved {item['article_url']}")
+            except Exception as w:
+                # If writing fails we still want to see why
+                logger.error(f"Write-stream failure: {w}", exc_info=True)
 
-    logger.info(f"Completed {txt_path.name}: {success_count} articles, {error_count} errors")
+    logger.info(
+        f"Completed {txt_path.name}: {success_count} ok, {error_count} errors"
+    )
     return year_month
 
 
@@ -302,7 +323,7 @@ def main():
     OUT_DIR.mkdir(exist_ok=True, parents=True)
     ERR_DIR.mkdir(exist_ok=True, parents=True)
 
-    CONCURRENCY = 20  # Increased from 5 - URLs processed concurrently per file
+    CONCURRENCY = 100  # Increased from 5 - URLs processed concurrently per file
 
     txt_files = list(UNSEEN_DIR.glob("*.txt"))
 
