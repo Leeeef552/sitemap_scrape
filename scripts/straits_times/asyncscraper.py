@@ -325,7 +325,7 @@ async def process_txt_async(
 
 
 def main():
-    BASE_DIR = pathlib.Path("/home/leeeefun681/volume/eefun/webscraping/sitemap/sitemap_scrape/data/straitsTimes")
+    BASE_DIR = pathlib.Path("/home/leeeefun681/volume/eefun/webscraping/sitemap/sitemap_scrape/data/straits_times")
     UNSEEN_DIR = BASE_DIR / "unseen"  # Original .txt files here
     SEEN_DIR = BASE_DIR / "seen"      # Processed .txt files moved here
     OUT_DIR = BASE_DIR / "scraped"
