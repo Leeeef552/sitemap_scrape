@@ -244,17 +244,13 @@ async def process_txt_async(
     err_dir: pathlib.Path,
     concurrency: int = 5,
 ) -> str | None:
-    """
-    Stream-safe alternative to the original implementation,
-    with per-URL tqdm progress bar.
-    """
     year_month = txt_path.stem
     out_file = out_dir / f"{year_month}.jsonl"
     err_file = err_dir / f"{year_month}_errors.jsonl"
 
     logger.info(f"Processing {txt_path.name}…")
 
-    # Read URLs
+    # ── 1) Read all URLs from the .txt ────────────────────────────────────────
     try:
         urls = [ln.strip() for ln in txt_path.read_text().splitlines() if ln.strip()]
     except Exception as e:
@@ -265,6 +261,24 @@ async def process_txt_async(
         logger.warning(f"No URLs found in {txt_path.name}")
         return year_month
 
+    # ── 2) Filter out URLs we've already scraped successfully ───────────────
+    processed_urls = set()
+    if out_file.exists():
+        for line in out_file.read_text(encoding="utf-8").splitlines():
+            try:
+                rec = json.loads(line)
+                if isinstance(rec, dict) and "article_url" in rec:
+                    processed_urls.add(rec["article_url"])
+            except json.JSONDecodeError:
+                continue
+
+    # Keep only the ones not yet done
+    urls = [u for u in urls if u not in processed_urls]
+    if not urls:
+        logger.info(f"All URLs in {txt_path.name} are already processed; skipping.")
+        return year_month
+
+    # ── 3) Now urls contains only new entries; proceed as before ───────────
     success_count = error_count = 0
 
     async with AsyncScraper(concurrency=concurrency) as scraper, \
@@ -312,7 +326,7 @@ async def process_txt_async(
 
 def main():
     BASE_DIR = pathlib.Path("/home/leeeefun681/volume/eefun/webscraping/sitemap/sitemap_scrape/data/straitsTimes")
-    UNSEEN_DIR = BASE_DIR / "test"  # Original .txt files here
+    UNSEEN_DIR = BASE_DIR / "unseen"  # Original .txt files here
     SEEN_DIR = BASE_DIR / "seen"      # Processed .txt files moved here
     OUT_DIR = BASE_DIR / "scraped"
     ERR_DIR = BASE_DIR / "unsuccessful"
