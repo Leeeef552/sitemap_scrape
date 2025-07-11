@@ -2,7 +2,7 @@ from typing import Any, List
 import asyncio, json, pathlib
 from tqdm.auto import tqdm
 from ...utils.logger import logger 
-from .asyncscraper import AsyncScraper
+from .st_scraper import AsyncScraper
 
 
 class RetryScraper:

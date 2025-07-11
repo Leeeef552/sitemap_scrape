@@ -9,9 +9,10 @@ from openai import OpenAI
 from playwright.async_api import async_playwright, Browser, BrowserContext
 from ...utils.logger import logger  # Ensure this logger is configured
 import random
+import re
 
 
-class AsyncScraper:
+class ST_Scraper:
     """Scrapes articles using Playwright with batch processing and context reuse"""
 
     def __init__(
@@ -72,8 +73,6 @@ class AsyncScraper:
     def _clean_content(self, article: Tag) -> str:
         """Extract and clean text content from article tag"""
         # Remove unwanted elements
-        for element in article.find_all(['script', 'style', 'footer', 'nav', 'aside', 'header', 'button', 'form', 'input']):
-            element.decompose()
 
         content = article.get_text(separator="\n\n", strip=True)
         if not content.strip():
@@ -121,7 +120,6 @@ class AsyncScraper:
             try:
                 await page.goto(url, wait_until="domcontentloaded", timeout=15000)  # Reduced timeout
                 await page.wait_for_selector("article", timeout=15000)
-                # Removed image navigation clicking - just get the current page content
                 
                 html = await page.content()
                 logger.debug(f"Successfully fetched content from {url}")
@@ -138,12 +136,13 @@ class AsyncScraper:
         logger.debug(f"Starting scrape for URL: {url}")
         
         try:
-            max_retries = 2
+            max_retries = 3
             for attempt in range(max_retries):
                 soup = await self._fetch_page_content(url)
                 if soup and soup.find("article"):
+                    logger.info(f"Article successfully found {url}")
                     break
-                logger.info(f"Retrying {url} (attempt {attempt+2}/{max_retries+1})")
+                logger.info(f"Retrying {url}")
                 
             article = soup.find("article")
             if not article:
@@ -172,12 +171,25 @@ class AsyncScraper:
                 except (ValueError, TypeError):
                     pass
             else:
-                meta = soup.find("meta", {"property": "article:published_time"})
-                if meta and meta.has_attr("content"):
+                # 1) Look for <span>Published Thu, May 29, 2014 · 10:00 PM</span>
+                span = article.find("span", string=re.compile(r"\bPublished\b", re.IGNORECASE))
+                if span:
+                    raw = span.get_text(strip=True)
+                    # remove leading "Published", optional colon/dot and whitespace
+                    cleaned = re.sub(r"^[Pp]ublished[:·\s]*", "", raw)
                     try:
-                        pub_date = dateparser.parse(meta["content"]).isoformat()
+                        pub_date = dateparser.parse(cleaned).isoformat()
                     except (ValueError, TypeError):
                         pass
+
+                else:
+                    # 2) Fallback to meta[property="article:published_time"]
+                    meta = soup.find("meta", {"property": "article:published_time"})
+                    if meta and meta.has_attr("content"):
+                        try:
+                            pub_date = dateparser.parse(meta["content"]).isoformat()
+                        except (ValueError, TypeError):
+                            pass
 
             # Extract and clean content
             content = self._clean_content(article)
@@ -243,6 +255,7 @@ async def process_txt_async(
     out_dir: pathlib.Path,
     err_dir: pathlib.Path,
     concurrency: int = 5,
+    scraper_class: type=ST_Scraper
 ) -> str | None:
     year_month = txt_path.stem
     out_file = out_dir / f"{year_month}.jsonl"
@@ -281,7 +294,7 @@ async def process_txt_async(
     # ── 3) Now urls contains only new entries; proceed as before ───────────
     success_count = error_count = 0
 
-    async with AsyncScraper(concurrency=concurrency) as scraper, \
+    async with scraper_class(concurrency=concurrency) as scraper, \
                aiofiles.open(out_file, "a", encoding="utf-8") as ok_f, \
                aiofiles.open(err_file, "a", encoding="utf-8") as er_f:
 
@@ -350,7 +363,7 @@ def main():
     # Process files one by one (you can modify this to process multiple files concurrently if needed)
     for txt_file in tqdm(txt_files, desc="Processing urls"):
         try:
-            result = asyncio.run(process_txt_async(txt_file, OUT_DIR, ERR_DIR, CONCURRENCY))
+            result = asyncio.run(process_txt_async(txt_file, OUT_DIR, ERR_DIR, CONCURRENCY, ST_Scraper))
             if result:
                 logger.info(f"Processed {txt_file.name} with result {result}")
             
