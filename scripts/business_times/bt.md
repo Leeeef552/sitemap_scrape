@@ -1,12 +1,12 @@
 ## xml
-- https://www.straitstimes.com/sitemap.xml
+- https://www.businesstimes.com.sg/sitemap.xml
+
 
 ## scrape archive
-- scrape using playwright to load navigation images
-
-
+- scrape as a html
+- xml structure similar to straits times
 ```python
-f"https://www.straitstimes.com/sitemap/{year}/{month}/feeds.xml"
+f"https://www.businesstimes.com/sitemap/{year}/{month}/feeds.xml"
 # just ensure the month is not this month 
 ```
 - the xml structure of the above link is as follows
@@ -14,7 +14,6 @@ f"https://www.straitstimes.com/sitemap/{year}/{month}/feeds.xml"
     - <url>...</url>
      - <loc>URL</loc>
 - just need the URL
-
 
 
 ## scrape live

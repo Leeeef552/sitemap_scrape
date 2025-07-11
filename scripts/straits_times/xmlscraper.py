@@ -9,6 +9,10 @@ from typing import Iterable, List
 import httpx
 from bs4 import BeautifulSoup
 
+## scrapes from the xml sitemap, takes only monthly feedsusing the below re patter
+## excludes this month's feed
+
+
 MONTH_FEED_RE = re.compile(r"/(\d{4})/(\d{2})/feeds\.xml$")   # keep only YYYY/MM feeds
 
 @dataclass
@@ -18,6 +22,7 @@ class XMLScraper:
     timeout: float = 15.0
     polite_delay: float = 1.0
     max_concurrency: int = 5
+    abbrev: str = "st"
 
     # ────────────────────────── public helpers ──────────────────────────────
     async def dump_async(self) -> None:
@@ -109,19 +114,23 @@ class XMLScraper:
 
             # derive filename st_YYYY_MM.txt from the URL
             m = MONTH_FEED_RE.search(feed_url)
-            fname = f"st_{m.group(1)}_{m.group(2)}.txt"
+            fname = f"{self.abbrev}_{m.group(1)}_{m.group(2)}.txt"
             outpath = self.out_dir / fname
             outpath.write_text("\n".join(urls), encoding="utf-8")
 
             print(f"{len(urls):5d} · {outpath.relative_to(self.out_dir)}")
             await asyncio.sleep(self.polite_delay)  # respectful crawl 
             
+def main():
+    extractor = XMLScraper(
+        index_url="https://www.straitstimes.com/sitemap.xml",
+        timeout=10,
+        polite_delay=0.5,
+        max_concurrency=8,
+        out_dir="/home/leeeefun681/volume/eefun/webscraping/sitemap/sitemap_scrape/data/straits_times/unseen",
+        abbrev="st"
+    )
+    extractor.dump()
 
-extractor = XMLScraper(
-    index_url="https://www.straitstimes.com/sitemap.xml",
-    timeout=10,
-    polite_delay=0.5,
-    max_concurrency=8,
-    out_dir="/home/leeeefun681/volume/eefun/webscraping/sitemap/sitemap_scrape/data/straitsTimes/st_sitemaps"
-)
-extractor.dump()
+if __name__ == "__main__":
+    main()
