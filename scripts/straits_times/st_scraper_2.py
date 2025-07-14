@@ -5,7 +5,6 @@ from dateutil import parser as dateparser
 from typing import Any, Dict, List, Optional
 import asyncio, json, pathlib, traceback
 from tqdm.auto import tqdm
-from openai import OpenAI
 from playwright.async_api import async_playwright, Browser, BrowserContext
 from ...utils.logger import logger  # Ensure this logger is configured
 import random
@@ -307,7 +306,7 @@ async def process_txt_async(
 
 
 def main():
-    BASE_DIR = pathlib.Path("/home/leeeefun681/volume/eefun/webscraping/sitemap/sitemap_scrape/data/straits_times")
+    BASE_DIR = pathlib.Path("/tier1/_q4/intern/eefun/webscraping/sitemap/sitemap_scrape/data/straits_times")
     UNSEEN_DIR = BASE_DIR / "unseen"  # Original .txt files here
     SEEN_DIR = BASE_DIR / "seen"      # Processed .txt files moved here
     OUT_DIR = BASE_DIR / "scraped"
