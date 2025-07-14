@@ -96,8 +96,8 @@ class ST_Scraper:
             context = await self._get_available_context()
             page = await context.new_page()
             try:
-                await page.goto(url, wait_until="domcontentloaded", timeout=30000)  # Reduced timeout
-                await page.wait_for_selector("article", timeout=30000)
+                await page.goto(url, wait_until="domcontentloaded", timeout=45000)  # Reduced timeout
+                await page.wait_for_selector("article", timeout=45000)
                 
                 html = await page.content()
                 logger.debug(f"Successfully fetched content from {url}")
@@ -114,7 +114,7 @@ class ST_Scraper:
         logger.debug(f"Starting scrape for URL: {url}")
         
         try:
-            max_retries = 3
+            max_retries = 2
             for attempt in range(max_retries):
                 soup = await self._fetch_page_content(url)
                 if soup and soup.find("article"):
