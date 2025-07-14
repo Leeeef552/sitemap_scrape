@@ -9,6 +9,7 @@ from playwright.async_api import async_playwright, Browser, BrowserContext
 from ...utils.logger import logger  # Ensure this logger is configured
 import random
 import re
+import concurrent.futures, os, functools
 
 
 class ST_Scraper:

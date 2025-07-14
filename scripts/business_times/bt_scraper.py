@@ -9,6 +9,7 @@ from ...utils.logger import logger  # Ensure this logger is configured
 from ..straits_times.st_scraper import ST_Scraper, process_txt_async
 import re
 from urllib.parse import urljoin, urlparse, parse_qs
+import concurrent.futures, os, functools
 
 
 class BT_Scraper(ST_Scraper):
@@ -92,45 +93,72 @@ class BT_Scraper(ST_Scraper):
         return {"image_url": best_url, "alt_text": alt}
 
 
-def main():
-    BASE_DIR = pathlib.Path("/workspace/eefun/webscraping/sitemap/sitemap_scrape/data/business_times")
-    UNSEEN_DIR = BASE_DIR / "unseen"  # Original .txt files here
-    SEEN_DIR = BASE_DIR / "seen"      # Processed .txt files moved here
-    OUT_DIR = BASE_DIR / "scraped"
-    ERR_DIR = BASE_DIR / "unsuccessful"
 
-    # Ensure directories exist
-    UNSEEN_DIR.mkdir(exist_ok=True, parents=True)
-    SEEN_DIR.mkdir(exist_ok=True, parents=True)
-    OUT_DIR.mkdir(exist_ok=True, parents=True)
-    ERR_DIR.mkdir(exist_ok=True, parents=True)
+def _run_one_file(txt_path: pathlib.Path,
+                  out_dir: pathlib.Path,
+                  err_dir: pathlib.Path,
+                  seen_dir: pathlib.Path,
+                  concurrency: int) -> str:
+    try:
+        asyncio.run(
+            process_txt_async(
+                txt_path,
+                out_dir,
+                err_dir,
+                concurrency,
+                BT_Scraper
+            )
+        )
+        # atomic rename so we can't double-process
+        txt_path.rename(seen_dir / txt_path.name)
+        return f"✔ {txt_path.name}"
+    except Exception as e:
+        logger.error(f"Worker failed on {txt_path}: {e}", exc_info=True)
+        return f"✖ {txt_path.name}: {e}"
 
-    CONCURRENCY = 100  # Increased from 5 - URLs processed concurrently per file
+def main() -> None:
+    BASE_DIR = pathlib.Path(
+        "/workspace/eefun/webscraping/sitemap/sitemap_scrape/data/business_times"
+    )
+    UNSEEN_DIR = BASE_DIR / "unseen"
+    SEEN_DIR   = BASE_DIR / "seen"
+    OUT_DIR    = BASE_DIR / "scraped"
+    ERR_DIR    = BASE_DIR / "unsuccessful"
+
+    # make sure the dirs exist
+    for d in (UNSEEN_DIR, SEEN_DIR, OUT_DIR, ERR_DIR):
+        d.mkdir(parents=True, exist_ok=True)
+
+    CONCURRENCY_IN_FILE    = 50
+    MAX_PARALLEL_TXT_FILES = 4
 
     txt_files = list(UNSEEN_DIR.glob("*.txt"))
-
     if not txt_files:
-        logger.warning(f"No .txt files found in {UNSEEN_DIR}")
+        logger.warning("No .txt files to process")
         return
 
-    logger.info(f"Found {len(txt_files)} files to process")
+    logger.info(f"Submitting {len(txt_files)} files "
+                f"to a pool of {MAX_PARALLEL_TXT_FILES} workers")
 
-    # Process files one by one (you can modify this to process multiple files concurrently if needed)
-    for txt_file in tqdm(txt_files, desc="Processing urls"):
-        try:
-            result = asyncio.run(process_txt_async(txt_file, OUT_DIR, ERR_DIR, CONCURRENCY, BT_Scraper))
-            if result:
-                logger.info(f"Processed {txt_file.name} with result {result}")
-            
-            # Move processed file to seen directory
-            seen_path = SEEN_DIR / txt_file.name
-            txt_file.rename(seen_path)
-            
-        except Exception as e:
-            logger.error(f"Error processing {txt_file}: {e}", exc_info=True)
+    # freeze the arguments other than txt_path
+    worker = functools.partial(
+        _run_one_file,
+        out_dir=OUT_DIR,
+        err_dir=ERR_DIR,
+        seen_dir=SEEN_DIR,
+        concurrency=CONCURRENCY_IN_FILE,
+    )
+
+    # ── use processes for real parallelism (each owns a Chromium) ──
+    with concurrent.futures.ProcessPoolExecutor(
+            max_workers=MAX_PARALLEL_TXT_FILES
+    ) as pool:
+        for status in tqdm(pool.map(worker, txt_files),
+                           total=len(txt_files),
+                           desc="Files"):
+            logger.info(status)
 
     logger.info("All files processed!")
-
 
 if __name__ == "__main__":
     import time
