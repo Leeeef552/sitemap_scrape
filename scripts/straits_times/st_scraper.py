@@ -212,7 +212,7 @@ class ST_Scraper:
         results = await asyncio.gather(*tasks)
         logger.info(f"Completed batch scrape of {len(urls)} URLs")
         return results
-    
+
 
 async def process_txt_async(
     txt_path: pathlib.Path,
@@ -301,46 +301,70 @@ async def process_txt_async(
     )
     return year_month
 
+def _run_one_file(txt_file: pathlib.Path,
+                  out_dir: pathlib.Path,
+                  err_dir: pathlib.Path,
+                  seen_dir: pathlib.Path,
+                  concurrency: int) -> str:
+    """
+    This is executed in a *separate* process.
+    We call asyncio.run(...) because process pools are not async-aware.
+    """
+    try:
+        # do the actual scraping
+        asyncio.run(
+            process_txt_async(txt_file, out_dir, err_dir,
+                              concurrency, ST_Scraper)
+        )
+        # move to seen/  (atomic rename)
+        txt_file.rename(seen_dir / txt_file.name)
+        return f"✔ {txt_file.name}"
+    except Exception as e:
+        logger.error(f"Worker failed on {txt_file}: {e}", exc_info=True)
+        return f"✖ {txt_file.name}: {e}"
 
-def main():
+
+def main() -> None:
     BASE_DIR = pathlib.Path("/workspace/eefun/webscraping/sitemap/sitemap_scrape/data/straits_times")
-    UNSEEN_DIR = BASE_DIR / "unseen"  # Original .txt files here
-    SEEN_DIR = BASE_DIR / "seen"      # Processed .txt files moved here
-    OUT_DIR = BASE_DIR / "scraped"
-    ERR_DIR = BASE_DIR / "unsuccessful"
+    UNSEEN_DIR = BASE_DIR / "unseen"
+    SEEN_DIR   = BASE_DIR / "seen"
+    OUT_DIR    = BASE_DIR / "scraped"
+    ERR_DIR    = BASE_DIR / "unsuccessful"
 
-    # Ensure directories exist
-    UNSEEN_DIR.mkdir(exist_ok=True, parents=True)
-    SEEN_DIR.mkdir(exist_ok=True, parents=True)
-    OUT_DIR.mkdir(exist_ok=True, parents=True)
-    ERR_DIR.mkdir(exist_ok=True, parents=True)
+    # ensure dirs exist
+    for d in (UNSEEN_DIR, SEEN_DIR, OUT_DIR, ERR_DIR):
+        d.mkdir(parents=True, exist_ok=True)
 
-    CONCURRENCY = 100  # Increased from 5 - URLs processed concurrently per file
+    CONCURRENCY_IN_FILE        = 50   # pages per file
+    MAX_PARALLEL_TXT_FILES     = 4  # change as you like
 
     txt_files = list(UNSEEN_DIR.glob("*.txt"))
-    print(len(txt_files))
-
     if not txt_files:
-        logger.warning(f"No .txt files found in {UNSEEN_DIR}")
+        logger.warning("No .txt files to process")
         return
 
-    logger.info(f"Found {len(txt_files)} files to process")
+    logger.info(f"Submitting {len(txt_files)} files to the pool "
+                f"({MAX_PARALLEL_TXT_FILES} workers)")
 
-    # Process files one by one (you can modify this to process multiple files concurrently if needed)
-    for txt_file in tqdm(txt_files, desc="Processing urls"):
-        try:
-            result = asyncio.run(process_txt_async(txt_file, OUT_DIR, ERR_DIR, CONCURRENCY, ST_Scraper))
-            if result:
-                logger.info(f"Processed {txt_file.name} with result {result}")
-            
-            # Move processed file to seen directory
-            seen_path = SEEN_DIR / txt_file.name
-            txt_file.rename(seen_path)
-            
-        except Exception as e:
-            logger.error(f"Error processing {txt_file}: {e}", exc_info=True)
+    worker = functools.partial(
+        _run_one_file,
+        out_dir=OUT_DIR,
+        err_dir=ERR_DIR,
+        seen_dir=SEEN_DIR,
+        concurrency=CONCURRENCY_IN_FILE,
+    )
+
+    with concurrent.futures.ProcessPoolExecutor(
+            max_workers=MAX_PARALLEL_TXT_FILES,
+            mp_context=None  # use default 'spawn' on Windows, 'fork' on *nix
+    ) as pool:
+        for result in tqdm(pool.map(worker, txt_files),
+                           total=len(txt_files),
+                           desc="Files"):
+            logger.info(result)
 
     logger.info("All files processed!")
+
 
 
 if __name__ == "__main__":
