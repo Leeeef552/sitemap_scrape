@@ -4,10 +4,9 @@ from dateutil import parser as dateparser
 from typing import Any, Dict, List, Optional
 import asyncio, json, pathlib, traceback
 from tqdm.auto import tqdm
-from openai import OpenAI
 from playwright.async_api import async_playwright, Browser, BrowserContext
 from ...utils.logger import logger  # Ensure this logger is configured
-from ..straits_times.st_scraper import ST_Scraper, process_txt_async
+from ..straits_times.st_scraper_2 import ST_Scraper, process_txt_async
 import re
 from urllib.parse import urljoin, urlparse, parse_qs
 
@@ -94,7 +93,7 @@ class BT_Scraper(ST_Scraper):
 
 
 def main():
-    BASE_DIR = pathlib.Path("/home/leeeefun681/volume/eefun/webscraping/sitemap/sitemap_scrape/data/business_times")
+    BASE_DIR = pathlib.Path("/workspace/eefun/webscraping/sitemap/sitemap_scrape/data/business_times")
     UNSEEN_DIR = BASE_DIR / "unseen"  # Original .txt files here
     SEEN_DIR = BASE_DIR / "seen"      # Processed .txt files moved here
     OUT_DIR = BASE_DIR / "scraped"
@@ -106,7 +105,7 @@ def main():
     OUT_DIR.mkdir(exist_ok=True, parents=True)
     ERR_DIR.mkdir(exist_ok=True, parents=True)
 
-    CONCURRENCY = 75  # Increased from 5 - URLs processed concurrently per file
+    CONCURRENCY = 100  # Increased from 5 - URLs processed concurrently per file
 
     txt_files = list(UNSEEN_DIR.glob("*.txt"))
 

@@ -5,7 +5,6 @@ from dateutil import parser as dateparser
 from typing import Any, Dict, List, Optional
 import asyncio, json, pathlib, traceback
 from tqdm.auto import tqdm
-from openai import OpenAI
 from playwright.async_api import async_playwright, Browser, BrowserContext
 from ...utils.logger import logger  # Ensure this logger is configured
 import random
@@ -15,15 +14,7 @@ import re
 class ST_Scraper:
     """Scrapes articles using Playwright with batch processing and context reuse"""
 
-    def __init__(
-        self, 
-        llm_endpoint: str = "http://localhost:8124/v1", 
-        model: str = "unsloth/Llama-3.2-3B-Instruct",
-        concurrency: int = 5
-    ):
-        self.llm_client = OpenAI(base_url=llm_endpoint, api_key="no-api-key-required")
-        self.model = model
-        self.system_prompt = "You are a news summarization assistant. Provide a concise 100-word or less summary of the article content. Focus on key facts, events, and conclusions. Respond with the summary directly without saying anything else."
+    def __init__(self, concurrency: int = 5):
         self.concurrency = concurrency
         self.semaphore = asyncio.Semaphore(concurrency)
         self.browser: Optional[Browser] = None
@@ -79,20 +70,6 @@ class ST_Scraper:
             logger.warning("No text content extracted after cleaning.")
         return content
 
-    async def _generate_summary(self, content: str) -> str:
-        try:
-            # Run the blocking LLM call in a separate thread
-            response = await asyncio.to_thread(
-                self.llm_client.chat.completions.create,
-                model=self.model,
-                messages=[
-                    {"role": "user", "content": f"{self.system_prompt}\nArticle contents:\n{content}"}
-                ],
-            )
-            return response.choices[0].message.content.strip()
-        except Exception as e:
-            logger.error(f"LLM summary generation error: {e}", exc_info=True)
-            return f"Summary generation failed: {str(e)}"
         
     def _extract_image_src(self, img_tag: Tag, page_url: str) -> Optional[str]:
         """
@@ -118,8 +95,8 @@ class ST_Scraper:
             context = await self._get_available_context()
             page = await context.new_page()
             try:
-                await page.goto(url, wait_until="domcontentloaded", timeout=15000)  # Reduced timeout
-                await page.wait_for_selector("article", timeout=15000)
+                await page.goto(url, wait_until="domcontentloaded", timeout=17500)  # Reduced timeout
+                await page.wait_for_selector("article", timeout=17500)
                 
                 html = await page.content()
                 logger.debug(f"Successfully fetched content from {url}")
@@ -194,18 +171,6 @@ class ST_Scraper:
             # Extract and clean content
             content = self._clean_content(article)
 
-            # Truncate if too long
-            truncated = False
-            if len(content) > 12000:
-                content = content[:12000]
-                truncated = True
-                logger.info(f"Content for {url} was truncated to 12k characters")
-
-            # Generate summary
-            summary = await self._generate_summary(content)
-            if summary.startswith("Summary generation failed:"):
-                logger.error(f"Summary generation failed for {url}: {summary}")
-
             # Collect images with alt text and caption
             images: List[Dict[str, Any]] = []
             
@@ -228,8 +193,7 @@ class ST_Scraper:
                 "article_url": url,
                 "site_title": title,
                 "publish_date": pub_date,
-                "summary": summary,
-                "truncated": truncated,
+                "content": content,
                 "images": images,
             }
             
@@ -338,7 +302,7 @@ async def process_txt_async(
 
 
 def main():
-    BASE_DIR = pathlib.Path("/home/leeeefun681/volume/eefun/webscraping/sitemap/sitemap_scrape/data/straits_times")
+    BASE_DIR = pathlib.Path("/workspace/eefun/webscraping/sitemap/sitemap_scrape/data/straits_times")
     UNSEEN_DIR = BASE_DIR / "unseen"  # Original .txt files here
     SEEN_DIR = BASE_DIR / "seen"      # Processed .txt files moved here
     OUT_DIR = BASE_DIR / "scraped"
@@ -353,6 +317,7 @@ def main():
     CONCURRENCY = 100  # Increased from 5 - URLs processed concurrently per file
 
     txt_files = list(UNSEEN_DIR.glob("*.txt"))
+    print(len(txt_files))
 
     if not txt_files:
         logger.warning(f"No .txt files found in {UNSEEN_DIR}")
