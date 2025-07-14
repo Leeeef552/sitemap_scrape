@@ -306,7 +306,7 @@ async def process_txt_async(
 
 
 def main():
-    BASE_DIR = pathlib.Path("/tier1/_q4/intern/eefun/webscraping/sitemap/sitemap_scrape/data/straits_times")
+    BASE_DIR = pathlib.Path("/workspace/eefun/webscraping/sitemap/sitemap_scrape/data/straits_times")
     UNSEEN_DIR = BASE_DIR / "unseen"  # Original .txt files here
     SEEN_DIR = BASE_DIR / "seen"      # Processed .txt files moved here
     OUT_DIR = BASE_DIR / "scraped"
@@ -321,6 +321,7 @@ def main():
     CONCURRENCY = 100  # Increased from 5 - URLs processed concurrently per file
 
     txt_files = list(UNSEEN_DIR.glob("*.txt"))
+    print(len(txt_files))
 
     if not txt_files:
         logger.warning(f"No .txt files found in {UNSEEN_DIR}")
