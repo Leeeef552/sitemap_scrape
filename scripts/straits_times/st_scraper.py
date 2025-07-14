@@ -95,8 +95,8 @@ class ST_Scraper:
             context = await self._get_available_context()
             page = await context.new_page()
             try:
-                await page.goto(url, wait_until="domcontentloaded", timeout=17500)  # Reduced timeout
-                await page.wait_for_selector("article", timeout=17500)
+                await page.goto(url, wait_until="domcontentloaded", timeout=30000)  # Reduced timeout
+                await page.wait_for_selector("article", timeout=30000)
                 
                 html = await page.content()
                 logger.debug(f"Successfully fetched content from {url}")
