@@ -138,7 +138,7 @@ def main():
     OUT_DIR.mkdir(exist_ok=True, parents=True)
     ERR_DIR.mkdir(exist_ok=True, parents=True)
 
-    CONCURRENCY = 75
+    CONCURRENCY = 50
     MAX_PARALLEL_TXT_FILES = 4  # Number of files to process in parallel
 
     txt_files = list(UNSEEN_DIR.glob("*.txt"))
