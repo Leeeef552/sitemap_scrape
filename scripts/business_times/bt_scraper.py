@@ -6,7 +6,7 @@ import asyncio, json, pathlib, traceback
 from tqdm.auto import tqdm
 from playwright.async_api import async_playwright, Browser, BrowserContext
 from ...utils.logger import logger  # Ensure this logger is configured
-from ..straits_times.st_scraper_2 import ST_Scraper, process_txt_async
+from ..straits_times.st_scraper import ST_Scraper, process_txt_async
 import re
 from urllib.parse import urljoin, urlparse, parse_qs
 

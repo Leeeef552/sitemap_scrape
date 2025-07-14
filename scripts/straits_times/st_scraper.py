@@ -219,7 +219,8 @@ async def process_txt_async(
     out_dir: pathlib.Path,
     err_dir: pathlib.Path,
     concurrency: int = 5,
-    scraper_class: type=ST_Scraper
+    scraper_class: type=ST_Scraper,
+    ensure_ascii: bool=True
 ) -> str | None:
     year_month = txt_path.stem
     out_file = out_dir / f"{year_month}.jsonl"
@@ -280,7 +281,7 @@ async def process_txt_async(
                 target_f = er_f if is_error else ok_f
 
                 # Write & flush
-                await target_f.write(json.dumps(item, default=str) + "\n")
+                await target_f.write(json.dumps(item,  ensure_ascii=ensure_ascii, default=str) + "\n")
                 await target_f.flush()
 
                 # Logging and counters
