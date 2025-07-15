@@ -6,7 +6,7 @@ import shutil
 
 # Configuration: set the directory and threshold here
 ERROR_DIR = "/workspace/eefun/webscraping/sitemap/sitemap_scrape/data/business_times/unsuccessful"
-THRESHOLD = 5
+THRESHOLD = 10
 UNSEEN = "/workspace/eefun/webscraping/sitemap/sitemap_scrape/data/business_times/unseen"
 SEEN = "/workspace/eefun/webscraping/sitemap/sitemap_scrape/data/business_times/seen"
 

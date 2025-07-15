@@ -6,9 +6,9 @@ import asyncio, json, pathlib, traceback, random, re
 from tqdm.auto import tqdm
 import concurrent.futures
 from ...utils.logger import logger
-from ..straits_times.st_scraper import ST_Scraper, process_txt_async
+from ..straits_times.st_scraper_2 import ST_Scraper_2, process_txt_async
 
-class TM_Scraper(ST_Scraper):
+class TM_Scraper(ST_Scraper_2):
 
     def _is_data_uri(self, u: str) -> bool:
         return u.strip().lower().startswith("data:")

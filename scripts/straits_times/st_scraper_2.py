@@ -206,7 +206,7 @@ async def process_txt_async(
     out_dir: pathlib.Path,
     err_dir: pathlib.Path,
     concurrency: int = 5,
-    scraper_class: type=ST_Scraper,
+    scraper_class: type=ST_Scraper_2,
     ensure_ascii: bool=True,
     pages_before_restart: int=1500
 ) -> str | None:
