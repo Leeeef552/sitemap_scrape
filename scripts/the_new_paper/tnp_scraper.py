@@ -6,13 +6,155 @@ import asyncio, json, pathlib, traceback, random, re
 from tqdm.auto import tqdm
 import concurrent.futures
 from ...utils.logger import logger
-from ..straits_times.st_scraper import process_txt_async
-from ..tamil_murasu.tm_scraper import TM_SCraper
+from ..straits_times.st_scraper import ST_Scraper, process_txt_async
+
+
+class TNP_Scraper(ST_Scraper):
+
+    # ------------------------------------------------------------------ #
+    #  NEW helper: reject placeholders & reaction GIFs (case‑insensitive) #
+    # ------------------------------------------------------------------ #
+    _UNWANTED_PAT = re.compile(
+        r"""
+        /assets/image-placeholder-.*\.png$   |   # e.g. …/image-placeholder-39p4V5-z.png
+        /reactions/\d+\.gif$                     # e.g. …/reactions/4.gif
+        """,
+        re.I | re.X,
+    )
+
+    def _is_unwanted_image(self, u: str) -> bool:
+        return bool(self._UNWANTED_PAT.search(u))
+
+    def _is_data_uri(self, u: str) -> bool:
+        return u.strip().lower().startswith("data:")
+
+    def _pick_largest_from_srcset(self, srcset: str) -> str | None:
+        best_url = None
+        best_w   = -1
+
+        for candidate in srcset.split(","):
+            url, *rest = candidate.strip().split()
+
+            # skip data‑URIs and our new unwanted patterns
+            if self._is_data_uri(url) or self._is_unwanted_image(url):
+                continue
+
+            w = int(rest[0][:-1]) if rest and rest[0].endswith("w") else -1
+            if w > best_w:
+                best_url, best_w = url, w
+
+        return best_url
+
+    async def scrape_single_url(self, url: str) -> Dict[str, Any]:        
+        try:
+            max_retries = 3
+            for attempt in range(max_retries):
+                soup = await self._fetch_page_content(url)
+                if soup and soup.find("article"):
+                    logger.info(f"Article successfully found {url}")
+                    break
+                logger.info(f"Retrying {url}")
+                
+            article = soup.find("article")
+            if not article:
+                logger.error(f"No <article> tag found in {url}")
+                raise RuntimeError("No <article> tag found")
+
+            # Title
+            h1 = article.find("h1")
+            title = (
+                h1.get_text(strip=True)
+                if h1
+                else (soup.title.string.strip() if soup.title else "(untitled)")
+            )
+
+            # ——— Published date (from the URL) ———
+            pub_date = None
+            m = re.search(r"story(\d{8})", url)
+            if m:
+                try:
+                    # parse “YYYYMMDD” into a date and iso‑format it
+                    dt = dateparser.parse(m.group(1))
+                    pub_date = dt.date().isoformat()
+                except Exception:
+                    pub_date = None
+
+            # ——— Fallback: scrape the on‑page <p data-testid="date"> ———
+            if not pub_date:
+                # assume you've already done: soup = BeautifulSoup(html, "html.parser")
+                date_tag = soup.find("p", {"data-testid": "date"})
+                if date_tag:
+                    # extract text like “01 Jul 2025 - 8:39 pm”
+                    raw = date_tag.get_text(" ", strip=True)
+                    try:
+                        dt2 = dateparser.parse(raw)
+                        # if you only want the date part:
+                        pub_date = dt2.date().isoformat()
+                        # or for full timestamp: pub_date = dt2.isoformat()
+                    except Exception:
+                        pub_date = None
+
+            # Extract and clean content
+            content = self._clean_content(article)
+
+            images = []
+            seen   = set()
+
+            for img in article.find_all("img", src=True):
+                # 1) choose the candidate URL ---------------------------------
+                if "srcset" in img.attrs:
+                    img_url = self._pick_largest_from_srcset(img["srcset"])
+                else:
+                    img_url = img["src"]
+
+                # 2) reject bad URLs ------------------------------------------
+                if (
+                    not img_url
+                    or self._is_data_uri(img_url)
+                    or self._is_unwanted_image(img_url)
+                ):
+                    continue
+
+                # 3) normalise, dedupe, and collect ---------------------------
+                img_url = urljoin(url, img_url)
+                if img_url in seen:
+                    continue
+                seen.add(img_url)
+
+                alt = img.get("alt") or None
+                cap_div = img.find_parent().find(
+                    "div", {"data-testid": "image-caption-wrapper"}
+                )
+                if cap_div:
+                    caption = cap_div.get_text(" ", strip=True)
+                else:
+                    figcap = img.find_next("figcaption")
+                    caption = figcap.get_text(" ", strip=True) if figcap else None
+
+                images.append(
+                    {
+                        "image_url": img_url,
+                        "alt_text":  alt,
+                        "caption":   caption or None,
+                    }
+                )
+
+            return {
+                "article_url":   url,
+                "site_title":    title,
+                "publish_date":  pub_date,
+                "content":       content,
+                "images":        images,
+            }
+            
+        except Exception as e:
+            logger.error(f"Error scraping {url}: {e}", exc_info=True)
+            return ("ERROR", url, repr(e), traceback.format_exc())
 
 
 def process_single_file(txt_file: pathlib.Path, OUT_DIR, ERR_DIR, SEEN_DIR, CONCURRENCY):
     try:
-        result = asyncio.run(process_txt_async(txt_file, OUT_DIR, ERR_DIR, CONCURRENCY, TM_SCraper, False))
+        result = asyncio.run(process_txt_async(txt_file, OUT_DIR, ERR_DIR, CONCURRENCY, TNP_Scraper, False))
         seen_path = SEEN_DIR / txt_file.name
         txt_file.rename(seen_path)
         return f"Processed {txt_file.name}"

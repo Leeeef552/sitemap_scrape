@@ -8,7 +8,7 @@ import concurrent.futures
 from ...utils.logger import logger
 from ..straits_times.st_scraper import ST_Scraper, process_txt_async
 
-class TM_SCraper(ST_Scraper):
+class TM_Scraper(ST_Scraper):
 
     def _is_data_uri(self, u: str) -> bool:
         return u.strip().lower().startswith("data:")
@@ -139,7 +139,7 @@ class TM_SCraper(ST_Scraper):
 
 def process_single_file(txt_file: pathlib.Path, OUT_DIR, ERR_DIR, SEEN_DIR, CONCURRENCY):
     try:
-        result = asyncio.run(process_txt_async(txt_file, OUT_DIR, ERR_DIR, CONCURRENCY, TM_SCraper, False))
+        result = asyncio.run(process_txt_async(txt_file, OUT_DIR, ERR_DIR, CONCURRENCY, TM_Scraper, False))
         seen_path = SEEN_DIR / txt_file.name
         txt_file.rename(seen_path)
         return f"Processed {txt_file.name}"
