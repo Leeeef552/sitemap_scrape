@@ -1,5 +1,4 @@
-# st_scraper_cleanup.py
-import aiofiles
+import aiofiles                 # NEW  ──────── async file I/O
 from urllib.parse import urljoin
 from bs4 import BeautifulSoup, Tag
 from dateutil import parser as dateparser
@@ -7,186 +6,280 @@ from typing import Any, Dict, List, Optional
 import asyncio, json, pathlib, traceback
 from tqdm.auto import tqdm
 from playwright.async_api import async_playwright, Browser, BrowserContext
-from ...utils.logger import logger          # make sure this logger is configured
-import random, re, concurrent.futures, os, functools, gc
+from ...utils.logger import logger  # Ensure this logger is configured
+import random
+import re
+import concurrent.futures, os, functools
 
-# ──────────────────────────────────────────────────────────────────────────────
-#  ST_Scraper with automatic browser "showers"
-# ──────────────────────────────────────────────────────────────────────────────
+
 class ST_Scraper:
-    def __init__(
-        self,
-        concurrency: int = 5,
-        pages_before_restart: int = 1_500
-    ):
+    """Scrapes articles using Playwright with batch processing and context reuse"""
+
+
+    def __init__(self, concurrency: int = 5):
+        self.MAX_USES = 250
         self.concurrency = concurrency
-        self.pages_before_restart = pages_before_restart
-        self._pages_processed = 0
         self.semaphore = asyncio.Semaphore(concurrency)
         self.browser: Optional[Browser] = None
         self.contexts: List[BrowserContext] = []
-        self.context_semaphore = asyncio.Semaphore(concurrency)
+        self.ctx_use_counts: List[int] = []
+        self.context_lock = asyncio.Lock()  # Changed from Semaphore to Lock
+        self.rotation_locks: List[asyncio.Lock] = []  # Individual locks per context
+        self.ua_pool = [
+            # Chrome (Win, Mac, Linux)
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/125.0.6422.113 Safari/537.36",
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_4) AppleWebKit/605.1.15 "
+            "(KHTML, like Gecko) Version/17.4 Safari/605.1.15",
+            # Firefox
+            "Mozilla/5.0 (Windows NT 10.0; rv:127.0) Gecko/20100101 Firefox/127.0",
+            # Edge
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36 Edg/124.0.2478.109",
+            # Mobile (occasionally sprinkle one in)
+            "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) "
+            "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1",
+        ]
 
-    # ── async context management ────────────────────────────────────────────
+    async def _new_context(self) -> BrowserContext:
+        """Create a fresh context with a random UA."""
+        ua = random.choice(self.ua_pool)
+        ctx = await self.browser.new_context(
+            viewport={"width": 1920, "height": 1080},
+            user_agent=ua,
+        )
+        logger.debug(f"Spawned new context with UA: {ua}")
+        return ctx
+
+    async def _replace_context(self, idx: int):
+        """Replace context at given index with individual lock to prevent concurrent rotation."""
+        async with self.rotation_locks[idx]:  # Use individual lock per context
+            if self.ctx_use_counts[idx] < self.MAX_USES:
+                # Another task already rotated this context
+                return
+                
+            old_ctx = self.contexts[idx]
+            try:
+                await old_ctx.close()
+            except Exception as e:
+                logger.warning(f"Error closing old context {idx}: {e}")
+            
+            try:
+                self.contexts[idx] = await self._new_context()
+                self.ctx_use_counts[idx] = 0
+                logger.info(f"Successfully rotated context {idx}")
+            except Exception as e:
+                logger.error(f"Error creating new context {idx}: {e}")
+                # Fallback: create a basic context
+                try:
+                    self.contexts[idx] = await self._new_context()
+                    self.ctx_use_counts[idx] = 0
+                except Exception as e2:
+                    logger.error(f"Fallback context creation failed for {idx}: {e2}")
+                    raise
+        
+
     async def __aenter__(self):
+        """Async context manager entry"""
         self.playwright = await async_playwright().start()
-        await self._launch_browser()
-        return self
-
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
-        await self._shutdown_browser()
-
-    # ── browser lifecycle helpers ────────────────────────────────────────────
-    async def _launch_browser(self):
         self.browser = await self.playwright.chromium.launch(
             headless=True,
             args=[
-                "--no-sandbox",
+                "--no-sandbox", 
                 "--disable-gpu",
-                "--disable-dev-shm-usage",
+                "--disable-dev-shm-usage",  # Reduce memory usage
                 "--disable-web-security",
-                "--disable-features=VizDisplayCompositor",
+                "--disable-features=VizDisplayCompositor"
             ],
         )
-        logger.info("Browser launched")
-        for _ in range(self.concurrency):
-            ctx = await self.browser.new_context(
-                viewport={"width": 1920, "height": 1080},
-                user_agent=(
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                    "AppleWebKit/537.36 (KHTML, like Gecko) "
-                    "Chrome/115.0.0.0 Safari/537.36"
-                ),
-            )
-            self.contexts.append(ctx)
-        self._pages_processed = 0
+        
+        # Pre-create browser contexts for reuse
+        logger.info("Pre‑creating %d browser contexts", self.concurrency)
+        for i in range(self.concurrency):
+            self.contexts.append(await self._new_context())
+            self.ctx_use_counts.append(0)
+            self.rotation_locks.append(asyncio.Lock())  # Individual lock per context
+        return self
 
-    async def _shutdown_browser(self):
-        for ctx in self.contexts:
-            try:
-                await ctx.close()
-            except Exception:
-                pass
-        self.contexts.clear()
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """Async context manager exit"""
+        # Close all contexts
+        for context in self.contexts:
+            await context.close()
+        
         if self.browser:
             await self.browser.close()
-        self.browser = None
-        gc.collect()
-        logger.info("Browser shut down and memory GC’ed")
+        if self.playwright:
+            await self.playwright.stop()
 
-    async def _restart_browser(self):
-        logger.warning(
-            f"Restarting browser after {self._pages_processed} pages to release memory"
-        )
-        await self._shutdown_browser()
-        await self._launch_browser()
-
-    # ── helpers ──────────────────────────────────────────────────────────────
     def _clean_content(self, article: Tag) -> str:
+        """Extract and clean text content from article tag"""
+        # Remove unwanted elements
+
         content = article.get_text(separator="\n\n", strip=True)
         if not content.strip():
             logger.warning("No text content extracted after cleaning.")
         return content
 
+        
     def _extract_image_src(self, img_tag: Tag, page_url: str) -> Optional[str]:
-        src = (
-            img_tag.get("src")
-            or img_tag.get("data-src")
-            or img_tag.get("data-original")
-        )
+        """
+        Resolve relative/absolute URLs for the given <img>.
+        """
+        src = img_tag.get("src") or img_tag.get("data-src") or img_tag.get("data-original")
         return urljoin(page_url, src) if src else None
 
-    async def _get_available_context(self) -> BrowserContext:
-        async with self.context_semaphore:
-            if not self.contexts:
-                logger.error("No browser contexts available!")
-                raise RuntimeError("No browser contexts available!")
-            idx = len(self.contexts) - self.context_semaphore._value - 1
-            return self.contexts[idx % len(self.contexts)]
+    async def _get_available_context(self) -> tuple[BrowserContext, int]:
+        """Get an available context with round-robin selection."""
+        async with self.context_lock:
+            # Simple round-robin selection
+            idx = hash(asyncio.current_task()) % len(self.contexts)
+            self.ctx_use_counts[idx] += 1
+            context = self.contexts[idx]
+            
+            # Check if rotation is needed (but don't block)
+            if self.ctx_use_counts[idx] >= self.MAX_USES:
+                # Schedule rotation asynchronously without blocking
+                asyncio.create_task(self._replace_context(idx))
+                logger.info("Scheduled context %d for rotation (uses: %d)", idx, self.ctx_use_counts[idx])
+        
+        return context, idx
 
-    async def _fetch_page_content(self, url: str) -> Optional[BeautifulSoup]:
-        if not self.browser:
-            raise RuntimeError("Browser not started. Use 'async with'.")
 
+    async def _fetch_page_content(self, url: str, retry: bool = True) -> Optional[BeautifulSoup]:
         async with self.semaphore:
-            await asyncio.sleep(random.uniform(0.05, 0.2))
-            context = await self._get_available_context()
-            page = await context.new_page()
+            idx = None          # keep track of which context we grabbed
+            context = None
+            page = None
             try:
-                await page.goto(url, wait_until="domcontentloaded", timeout=30_000)
+                context, idx = await self._get_available_context()
+                page = await context.new_page()
+                response = await page.goto(url, wait_until="domcontentloaded", timeout=20_000)
+                status = response.status if response else None
+
+                # Handle different status codes with specific retry logic
+                if status == 404:
+                    logger.warning("404 Not Found for %s – not retrying", url)
+                    raise RuntimeError(f"HTTP 404 - Page not found")
+                
+                if status == 500:
+                    logger.warning("500 Internal Server Error for %s – not retrying", url)
+                    raise RuntimeError(f"HTTP 500 - Internal server error")
+
+                if status == 429:
+                    logger.warning("429 for %s – will rotate context/UA", url)
+                    await page.close()
+                    # Schedule context rotation asynchronously to avoid blocking
+                    asyncio.create_task(self._replace_context(idx))
+                    if retry:
+                        await asyncio.sleep(random.uniform(3, 6))   # Longer back-off for 429
+                        # recursive call – but don't allow infinite retries
+                        return await self._fetch_page_content(url, retry=False)
+                    raise RuntimeError("429 Too Many Requests after retry")
+
+                if status not in (200,):
+                    raise RuntimeError(f"HTTP {status}")
+
                 await page.wait_for_selector("article", timeout=30_000)
                 html = await page.content()
                 return BeautifulSoup(html, "html.parser")
 
             except Exception as e:
-                logger.error(f"Failed to fetch {url}: {e}")
+                # Re-raise 404 and 500 errors to prevent retry
+                if "HTTP 404" in str(e) or "HTTP 500" in str(e):
+                    raise e
+                logger.error("Failed to fetch %s: %s", url, e)
                 return None
-
             finally:
-                try:
+                if page and not page.is_closed():
                     await page.close()
-                except Exception:
-                    pass
 
-                self._pages_processed += 1
-                if self._pages_processed >= self.pages_before_restart:
-                    await self._restart_browser()
 
-    # ── scraping logic (unchanged except docstrings trimmed) ────────────────
     async def scrape_single_url(self, url: str) -> Dict[str, Any]:
+        """Scrape a single URL for article content, metadata, images, and generate summary."""
+        logger.debug(f"Starting scrape for URL: {url}")
+        
         try:
-            for _ in range(2):  # retries
+            max_retries = 2
+            for attempt in range(max_retries):
                 soup = await self._fetch_page_content(url)
                 if soup and soup.find("article"):
+                    logger.info(f"Article successfully found {url}")
                     break
-
-            article = soup.find("article") if soup else None
+                
+                # Check if this was a 404 or 500 error by examining the last exception
+                # If it was, don't retry
+                if attempt < max_retries - 1:  # Only log retry if not the last attempt
+                    logger.info(f"Retrying {url}")
+                
+            article = soup.find("article")
             if not article:
+                logger.error(f"No <article> tag found in {url}")
                 raise RuntimeError("No <article> tag found")
 
+            # Title
             h1 = article.find("h1")
-            title = h1.get_text(strip=True) if h1 else (
-                soup.title.string.strip() if soup and soup.title else "(untitled)"
+            title = (
+                h1.get_text(strip=True)
+                if h1
+                else (soup.title.string.strip() if soup.title else "(untitled)")
             )
 
-            # publish date detection … (unchanged from your original)
+            # Published date (rich logic)
             pub_date: Optional[str] = None
             time_tag = article.find("time")
             if time_tag and time_tag.has_attr("datetime"):
                 try:
                     pub_date = dateparser.parse(time_tag["datetime"]).isoformat()
-                except Exception:
+                except (ValueError, TypeError):
                     pass
             elif time_tag:
                 try:
                     pub_date = dateparser.parse(time_tag.get_text(strip=True)).isoformat()
-                except Exception:
+                except (ValueError, TypeError):
                     pass
             else:
-                span = article.find("span", string=re.compile(r"\bPublished\b", re.I))
+                # 1) Look for <span>Published Thu, May 29, 2014 · 10:00 PM</span>
+                span = article.find("span", string=re.compile(r"\bPublished\b", re.IGNORECASE))
                 if span:
-                    cleaned = re.sub(r"^[Pp]ublished[:·\s]*", "", span.get_text(strip=True))
+                    raw = span.get_text(strip=True)
+                    # remove leading "Published", optional colon/dot and whitespace
+                    cleaned = re.sub(r"^[Pp]ublished[:·\s]*", "", raw)
                     try:
                         pub_date = dateparser.parse(cleaned).isoformat()
-                    except Exception:
+                    except (ValueError, TypeError):
                         pass
+
                 else:
-                    meta = soup.find("meta", {"property": "article:published_time"}) if soup else None
+                    # 2) Fallback to meta[property="article:published_time"]
+                    meta = soup.find("meta", {"property": "article:published_time"})
                     if meta and meta.has_attr("content"):
                         try:
                             pub_date = dateparser.parse(meta["content"]).isoformat()
-                        except Exception:
+                        except (ValueError, TypeError):
                             pass
 
+            # Extract and clean content
             content = self._clean_content(article)
+
+            # Collect images with alt text and caption
             images: List[Dict[str, Any]] = []
+            
             for picture in article.find_all("picture"):
+                # grab alt text from the <img> if present
                 img_tag = picture.find("img")
                 alt = img_tag.get("alt", "").strip() or None if img_tag else None
+
+                # now pull every <source> and that <img>
                 for tag in picture.find_all(["img"]):
                     src = self._extract_image_src(tag, url)
-                    if src:
-                        images.append({"image_url": src, "alt_text": alt})
+                    if not src:
+                        continue
+                    images.append({
+                        "image_url": src,
+                        "alt_text": alt
+                    })
 
             return {
                 "article_url": url,
@@ -195,14 +288,23 @@ class ST_Scraper:
                 "content": content,
                 "images": images,
             }
-
+            
         except Exception as e:
             logger.error(f"Error scraping {url}: {e}", exc_info=True)
             return ("ERROR", url, repr(e), traceback.format_exc())
 
     async def scrape_urls_batch(self, urls: List[str]) -> List[Any]:
-        tasks = [self.scrape_single_url(u) for u in urls]
-        return await asyncio.gather(*tasks)
+        """Scrape multiple URLs concurrently"""
+        logger.info(f"Starting batch scrape of {len(urls)} URLs")
+        
+        tasks = []
+        for url in urls:
+            await asyncio.sleep(0.15)   # 200 ms between task-spawns
+            tasks.append(self.scrape_single_url(url))
+        results = await asyncio.gather(*tasks)
+        logger.info(f"Completed batch scrape of {len(urls)} URLs")
+        return results
+
 
 async def process_txt_async(
     txt_path: pathlib.Path,
@@ -210,8 +312,7 @@ async def process_txt_async(
     err_dir: pathlib.Path,
     concurrency: int = 5,
     scraper_class: type=ST_Scraper,
-    ensure_ascii: bool=True,
-    pages_before_restart: int=1500
+    ensure_ascii: bool=True
 ) -> str | None:
     year_month = txt_path.stem
     out_file = out_dir / f"{year_month}.jsonl"
@@ -250,7 +351,7 @@ async def process_txt_async(
     # ── 3) Now urls contains only new entries; proceed as before ───────────
     success_count = error_count = 0
 
-    async with scraper_class(concurrency=concurrency, pages_before_restart=pages_before_restart) as scraper, \
+    async with scraper_class(concurrency=concurrency) as scraper, \
                aiofiles.open(out_file, "a", encoding="utf-8") as ok_f, \
                aiofiles.open(err_file, "a", encoding="utf-8") as er_f:
 
@@ -326,8 +427,8 @@ def main() -> None:
     for d in (UNSEEN_DIR, SEEN_DIR, OUT_DIR, ERR_DIR):
         d.mkdir(parents=True, exist_ok=True)
 
-    CONCURRENCY_IN_FILE        = 10   # pages per file
-    MAX_PARALLEL_TXT_FILES     = 4  # change as you like
+    CONCURRENCY_IN_FILE        = 50   # pages per file
+    MAX_PARALLEL_TXT_FILES     = 2  # change as you like
 
     txt_files = list(UNSEEN_DIR.glob("*.txt"))
     if not txt_files:

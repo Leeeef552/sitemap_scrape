@@ -9,6 +9,7 @@ from ...utils.logger import logger
 from ..straits_times.st_scraper import ST_Scraper, process_txt_async
 
 class TM_Scraper(ST_Scraper):
+    
 
     def _is_data_uri(self, u: str) -> bool:
         return u.strip().lower().startswith("data:")
@@ -159,8 +160,8 @@ def main():
     OUT_DIR.mkdir(exist_ok=True, parents=True)
     ERR_DIR.mkdir(exist_ok=True, parents=True)
 
-    CONCURRENCY = 15
-    MAX_PARALLEL_TXT_FILES = 4  # Number of files to process in parallel
+    CONCURRENCY = 50
+    MAX_PARALLEL_TXT_FILES = 1  # Number of files to process in parallel
 
     txt_files = list(UNSEEN_DIR.glob("*.txt"))
     if not txt_files:
