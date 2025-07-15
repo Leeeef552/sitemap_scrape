@@ -10,21 +10,20 @@ from ...utils.logger import logger  # Ensure this logger is configured
 import random
 import re
 import concurrent.futures, os, functools
-
+import time
 
 class ST_Scraper:
     """Scrapes articles using Playwright with batch processing and context reuse"""
 
-
     def __init__(self, concurrency: int = 5):
-        self.MAX_USES = 250
         self.concurrency = concurrency
+        self.min_interval = 1.5
+        self._last_request_ts = 0.0
+        self._rate_lock = asyncio.Lock()
         self.semaphore = asyncio.Semaphore(concurrency)
         self.browser: Optional[Browser] = None
         self.contexts: List[BrowserContext] = []
-        self.ctx_use_counts: List[int] = []
-        self.context_lock = asyncio.Lock()  # Changed from Semaphore to Lock
-        self.rotation_locks: List[asyncio.Lock] = []  # Individual locks per context
+        self.context_semaphore = asyncio.Semaphore(concurrency)
         self.ua_pool = [
             # Chrome (Win, Mac, Linux)
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -41,44 +40,6 @@ class ST_Scraper:
             "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1",
         ]
 
-    async def _new_context(self) -> BrowserContext:
-        """Create a fresh context with a random UA."""
-        ua = random.choice(self.ua_pool)
-        ctx = await self.browser.new_context(
-            viewport={"width": 1920, "height": 1080},
-            user_agent=ua,
-        )
-        logger.debug(f"Spawned new context with UA: {ua}")
-        return ctx
-
-    async def _replace_context(self, idx: int):
-        """Replace context at given index with individual lock to prevent concurrent rotation."""
-        async with self.rotation_locks[idx]:  # Use individual lock per context
-            if self.ctx_use_counts[idx] < self.MAX_USES:
-                # Another task already rotated this context
-                return
-                
-            old_ctx = self.contexts[idx]
-            try:
-                await old_ctx.close()
-            except Exception as e:
-                logger.warning(f"Error closing old context {idx}: {e}")
-            
-            try:
-                self.contexts[idx] = await self._new_context()
-                self.ctx_use_counts[idx] = 0
-                logger.info(f"Successfully rotated context {idx}")
-            except Exception as e:
-                logger.error(f"Error creating new context {idx}: {e}")
-                # Fallback: create a basic context
-                try:
-                    self.contexts[idx] = await self._new_context()
-                    self.ctx_use_counts[idx] = 0
-                except Exception as e2:
-                    logger.error(f"Fallback context creation failed for {idx}: {e2}")
-                    raise
-        
-
     async def __aenter__(self):
         """Async context manager entry"""
         self.playwright = await async_playwright().start()
@@ -94,13 +55,19 @@ class ST_Scraper:
         )
         
         # Pre-create browser contexts for reuse
-        logger.info("Pre‑creating %d browser contexts", self.concurrency)
+        logger.info(f"Creating {self.concurrency} browser contexts for reuse")
         for i in range(self.concurrency):
-            self.contexts.append(await self._new_context())
-            self.ctx_use_counts.append(0)
-            self.rotation_locks.append(asyncio.Lock())  # Individual lock per context
+            context = await self.browser.new_context(
+                viewport={"width": 1920, "height": 1080},
+                user_agent=(
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/115.0.0.0 Safari/537.36"
+                ),
+            )
+            self.contexts.append(context)
+        
         return self
-
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Async context manager exit"""
@@ -130,71 +97,63 @@ class ST_Scraper:
         src = img_tag.get("src") or img_tag.get("data-src") or img_tag.get("data-original")
         return urljoin(page_url, src) if src else None
 
-    async def _get_available_context(self) -> tuple[BrowserContext, int]:
-        """Get an available context with round-robin selection."""
-        async with self.context_lock:
+    async def _get_available_context(self) -> BrowserContext:
+        """Get an available browser context from the pool"""
+        async with self.context_semaphore:
             # Simple round-robin selection
-            idx = hash(asyncio.current_task()) % len(self.contexts)
-            self.ctx_use_counts[idx] += 1
-            context = self.contexts[idx]
-            
-            # Check if rotation is needed (but don't block)
-            if self.ctx_use_counts[idx] >= self.MAX_USES:
-                # Schedule rotation asynchronously without blocking
-                asyncio.create_task(self._replace_context(idx))
-                logger.info("Scheduled context %d for rotation (uses: %d)", idx, self.ctx_use_counts[idx])
+            context_index = len(self.contexts) - self.context_semaphore._value - 1
+            return self.contexts[context_index % len(self.contexts)]
+
+    async def _fetch_page_content(self, url: str) -> Optional[BeautifulSoup]:
+        """Fetch page content using Playwright with context reuse"""
+        if not self.browser:
+            raise RuntimeError("Browser not started. Use 'async with'.")
         
-        return context, idx
-
-
-    async def _fetch_page_content(self, url: str, retry: bool = True) -> Optional[BeautifulSoup]:
         async with self.semaphore:
-            idx = None          # keep track of which context we grabbed
-            context = None
-            page = None
+            async with self._rate_lock:              # only one task enters here
+                elapsed = time.monotonic() - self._last_request_ts
+                wait_for = self.min_interval - elapsed
+                if wait_for > 0:
+                    await asyncio.sleep(wait_for)
+                self._last_request_ts = time.monotonic()
+
+            context = await self._get_available_context()
+            page = await context.new_page()
             try:
-                context, idx = await self._get_available_context()
-                page = await context.new_page()
-                response = await page.goto(url, wait_until="domcontentloaded", timeout=20_000)
+                response = await page.goto(
+                    url,
+                    wait_until="domcontentloaded",
+                    timeout=20_000
+                )
                 status = response.status if response else None
 
-                # Handle different status codes with specific retry logic
-                if status == 404:
-                    logger.warning("404 Not Found for %s – not retrying", url)
-                    raise RuntimeError(f"HTTP 404 - Page not found")
-                
-                if status == 500:
-                    logger.warning("500 Internal Server Error for %s – not retrying", url)
-                    raise RuntimeError(f"HTTP 500 - Internal server error")
-
                 if status == 429:
-                    logger.warning("429 for %s – will rotate context/UA", url)
-                    await page.close()
-                    # Schedule context rotation asynchronously to avoid blocking
-                    asyncio.create_task(self._replace_context(idx))
-                    if retry:
-                        await asyncio.sleep(random.uniform(3, 6))   # Longer back-off for 429
-                        # recursive call – but don't allow infinite retries
-                        return await self._fetch_page_content(url, retry=False)
-                    raise RuntimeError("429 Too Many Requests after retry")
-
-                if status not in (200,):
+                    # Check for Retry-After header   
+                    retry_after = response.headers.get("retry-after")
+                    if retry_after:
+                        logger.warning(f"429 Too Many Requests for {url}. Retry-After: {retry_after}")
+                    else:
+                        headers = await response.all_headers()
+                        logger.debug(f"Response headers for {url}: {headers}")
+                    raise RuntimeError("429 Too Many Requests")
+                elif status in (404, 410, 500, 503):
+                    logger.error(f"HTTP {status} error for {url}")
                     raise RuntimeError(f"HTTP {status}")
-
-                await page.wait_for_selector("article", timeout=30_000)
+                elif status != 200:
+                    logger.error(f"Unexpected HTTP {status} for {url}")
+                    raise RuntimeError(f"Unexpected HTTP {status}")
+                
+                await page.wait_for_selector("article", timeout=30000)
+                
                 html = await page.content()
+                logger.debug(f"Successfully fetched content from {url}")
                 return BeautifulSoup(html, "html.parser")
-
+                
             except Exception as e:
-                # Re-raise 404 and 500 errors to prevent retry
-                if "HTTP 404" in str(e) or "HTTP 500" in str(e):
-                    raise e
-                logger.error("Failed to fetch %s: %s", url, e)
+                logger.error(f"Failed to fetch {url}: {e}")
                 return None
             finally:
-                if page and not page.is_closed():
-                    await page.close()
-
+                await page.close()  # Close the page but keep context alive
 
     async def scrape_single_url(self, url: str) -> Dict[str, Any]:
         """Scrape a single URL for article content, metadata, images, and generate summary."""
@@ -207,11 +166,7 @@ class ST_Scraper:
                 if soup and soup.find("article"):
                     logger.info(f"Article successfully found {url}")
                     break
-                
-                # Check if this was a 404 or 500 error by examining the last exception
-                # If it was, don't retry
-                if attempt < max_retries - 1:  # Only log retry if not the last attempt
-                    logger.info(f"Retrying {url}")
+                logger.info(f"Retrying {url}")
                 
             article = soup.find("article")
             if not article:
@@ -428,7 +383,7 @@ def main() -> None:
         d.mkdir(parents=True, exist_ok=True)
 
     CONCURRENCY_IN_FILE        = 50   # pages per file
-    MAX_PARALLEL_TXT_FILES     = 2  # change as you like
+    MAX_PARALLEL_TXT_FILES     = 4  # change as you like
 
     txt_files = list(UNSEEN_DIR.glob("*.txt"))
     if not txt_files:
