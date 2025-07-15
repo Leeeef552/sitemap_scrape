@@ -10,32 +10,6 @@ from ..straits_times.st_scraper import ST_Scraper, process_txt_async
 
 class TM_SCraper(ST_Scraper):
 
-    IMAGE_PATTERN = re.compile(r"^https?://cassette\.sphdigital\.com\.sg/image/.*", re.IGNORECASE)
-
-    def _extract_image_src(self, img_tag: Tag, page_url: str) -> Optional[List[str]]:
-        candidates = set()
-
-        # 1) srcset: "url1 1x, url2 2x"
-        srcset = img_tag.get("srcset")
-        if srcset:
-            for chunk in srcset.split(","):
-                url = chunk.strip().split(" ")[0]
-                candidates.add(urljoin(page_url, url))
-
-        # 2) single-source attributes
-        for attr in ("src", "data-src", "data-original"):
-            val = img_tag.get(attr)
-            if val:
-                candidates.add(urljoin(page_url, val))
-
-        # 3) filter by cassette.sphdigital.com.sg/image/
-        filtered = [
-            url for url in candidates
-            if self.IMAGE_PATTERN.match(url)
-        ]
-
-        return filtered
-
     async def scrape_single_url(self, url: str) -> Dict[str, Any]:
         """Scrape a single URL for article content, metadata, images, and generate summary."""
         logger.debug(f"Starting scrape for URL: {url}")
@@ -91,8 +65,29 @@ class TM_SCraper(ST_Scraper):
             # Extract and clean content
             content = self._clean_content(article)
 
-            # Use custom image extraction method
-            images = self._extract_image_src(article, url)
+            images: List[Dict[str, Any]] = []
+
+            # find every carousel wrapper whose class matches article-carousel-wrapper-<digits>
+            for wrapper in article.find_all("div", class_=re.compile(r"article-carousel-wrapper-\d+")):
+                # 1) the <a> tag’s href is the real image URL
+                a = wrapper.find("a", href=True)
+                if not a:
+                    continue
+                img_url = urljoin(url, a["href"])
+
+                # 2) alt text comes from the <img> inside that <a>
+                img_tag = a.find("img")
+                alt = img_tag.get("alt", "").strip() or None if img_tag else None
+
+                # 3) caption is in the div with data-testid="image-caption-wrapper"
+                cap_div = wrapper.find("div", {"data-testid": "image-caption-wrapper"})
+                caption = cap_div.get_text(" ", strip=True) or None if cap_div else None
+
+                images.append({
+                    "image_url": img_url,
+                    "alt_text":   alt,
+                    "caption":    caption,
+                })
 
             return {
                 "article_url":   url,

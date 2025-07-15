@@ -50,10 +50,6 @@ class BT_Scraper(ST_Scraper):
                q.get("dpr", [""])[0] == "1"
 
     def _best_image_from_picture(self, picture: Tag, page_url: str) -> Optional[Dict[str,Any]]:
-        """
-        Parse every <source>/@srcset and pick the URL with the largest 'w' value.
-        Fallback to the <img>/@src if no valid srcset entries found.
-        """
         candidates = []  # list of (width:int, url:str)
 
         # pattern:  capture URL (\S+), then optional whitespace+digits+w
@@ -129,7 +125,7 @@ def main() -> None:
     for d in (UNSEEN_DIR, SEEN_DIR, OUT_DIR, ERR_DIR):
         d.mkdir(parents=True, exist_ok=True)
 
-    CONCURRENCY_IN_FILE    = 50
+    CONCURRENCY_IN_FILE    = 20
     MAX_PARALLEL_TXT_FILES = 4
 
     txt_files = list(UNSEEN_DIR.glob("*.txt"))

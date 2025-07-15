@@ -6,7 +6,7 @@ import shutil
 
 # Configuration: set the directory and threshold here
 ERROR_DIR = "/workspace/eefun/webscraping/sitemap/sitemap_scrape/data/business_times/unsuccessful"
-THRESHOLD = 50
+THRESHOLD = 10
 UNSEEN = "/workspace/eefun/webscraping/sitemap/sitemap_scrape/data/business_times/unseen"
 SEEN = "/workspace/eefun/webscraping/sitemap/sitemap_scrape/data/business_times/seen"
 
@@ -58,24 +58,24 @@ def main():
             file_name = filename[:-13] + ".txt"
             print(file_name)
             
-            # # Attempt to move the .txt from seen to unseen
-            # src = os.path.join(SEEN, file_name)
-            # dst = os.path.join(UNSEEN, file_name)
-            # if os.path.exists(src):
-            #     try:
-            #         shutil.move(src, dst)
-            #         print(f"Moved: {src} -> {dst}")
-            #     except Exception as e:
-            #         print(f"Error moving {file_name}: {e}")
-            # else:
-            #     print(f"File not found in seen directory: {src}")
+            # Attempt to move the .txt from seen to unseen
+            src = os.path.join(SEEN, file_name)
+            dst = os.path.join(UNSEEN, file_name)
+            if os.path.exists(src):
+                try:
+                    shutil.move(src, dst)
+                    print(f"Moved: {src} -> {dst}")
+                except Exception as e:
+                    print(f"Error moving {file_name}: {e}")
+            else:
+                print(f"File not found in seen directory: {src}")
 
-            # # Remove the JSONL file after processing
-            # try:
-            #     os.remove(filepath)
-            #     print(f"Removed JSONL file: {filepath}")
-            # except Exception as e:
-            #     print(f"Error removing JSONL file {filepath}: {e}")
+            # Remove the JSONL file after processing
+            try:
+                os.remove(filepath)
+                print(f"Removed JSONL file: {filepath}")
+            except Exception as e:
+                print(f"Error removing JSONL file {filepath}: {e}")
 
 
 if __name__ == "__main__":
