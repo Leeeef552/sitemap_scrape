@@ -9,26 +9,21 @@ from ...utils.logger import logger
 from ..straits_times.st_scraper import ST_Scraper, process_txt_async
 
 class TM_SCraper(ST_Scraper):
+
+    def _is_data_uri(self, u: str) -> bool:
+        return u.strip().lower().startswith("data:")
+
     def _pick_largest_from_srcset(self, srcset: str) -> str:
         best_url = None
         best_w   = -1
 
         for candidate in srcset.split(","):
-            candidate = candidate.strip()
-            if not candidate:
+            url, *rest = candidate.strip().split()
+            if self._is_data_uri(url):          # ← ignore embedded data URLs
                 continue
 
-            # split on whitespace → ["https://…", "500w"]
-            parts = candidate.split()
-            url   = parts[0]
-            w     = -1
-            if len(parts) > 1 and parts[1].endswith("w"):
-                try:
-                    w = int(parts[1][:-1])
-                except ValueError:
-                    pass       # keep w = -1 for weird cases
-
-            if w > best_w:     # strictly keep the widest
+            w = int(rest[0][:-1]) if rest and rest[0].endswith("w") else -1
+            if w > best_w:
                 best_url, best_w = url, w
 
         return best_url
@@ -93,15 +88,19 @@ class TM_SCraper(ST_Scraper):
             seen   = set()
 
             for img in article.find_all("img", src=True):
-                # 1) choose the best URL --------------------------------------
+                # choose the “best” URL
                 if "srcset" in img.attrs:
-                    largest = self._pick_largest_from_srcset(img["srcset"])
-                    img_url = urljoin(url, largest)
+                    img_url = self._pick_largest_from_srcset(img["srcset"])
                 else:
-                    img_url = urljoin(url, img["src"])
+                    img_url = img["src"]
 
-                if img_url in seen:          # de‑duplicate
+                if not img_url or self._is_data_uri(img_url):   # ← filter here too
                     continue
+
+                img_url = urljoin(url, img_url)
+                if img_url in seen:
+                    continue
+
                 seen.add(img_url)
 
                 # 2) alt text --------------------------------------------------
@@ -150,7 +149,7 @@ def process_single_file(txt_file: pathlib.Path, OUT_DIR, ERR_DIR, SEEN_DIR, CONC
 
 def main():
     BASE_DIR = pathlib.Path("/workspace/eefun/webscraping/sitemap/sitemap_scrape/data/tamil_murasu")
-    UNSEEN_DIR = BASE_DIR / "test"
+    UNSEEN_DIR = BASE_DIR / "unseen"
     SEEN_DIR = BASE_DIR / "seen"
     OUT_DIR = BASE_DIR / "scraped"
     ERR_DIR = BASE_DIR / "unsuccessful"
@@ -160,8 +159,8 @@ def main():
     OUT_DIR.mkdir(exist_ok=True, parents=True)
     ERR_DIR.mkdir(exist_ok=True, parents=True)
 
-    CONCURRENCY = 5
-    MAX_PARALLEL_TXT_FILES = 2  # Number of files to process in parallel
+    CONCURRENCY = 10
+    MAX_PARALLEL_TXT_FILES = 4  # Number of files to process in parallel
 
     txt_files = list(UNSEEN_DIR.glob("*.txt"))
     if not txt_files:
