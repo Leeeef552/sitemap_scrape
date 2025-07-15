@@ -6,18 +6,20 @@ import asyncio, json, pathlib, traceback, random, re
 from tqdm.auto import tqdm
 import concurrent.futures
 from ...utils.logger import logger
-from ..straits_times.st_scraper import ST_Scraper, process_txt_async
+from ..straits_times.st_scraper_2 import ST_Scraper_2, process_txt_async
 
 
-class TNP_Scraper(ST_Scraper):
+class TNP_Scraper(ST_Scraper_2):
 
     # ------------------------------------------------------------------ #
     #  NEW helper: reject placeholders & reaction GIFs (case‑insensitive) #
     # ------------------------------------------------------------------ #
     _UNWANTED_PAT = re.compile(
         r"""
-        /assets/image-placeholder-.*\.png$   |   # e.g. …/image-placeholder-39p4V5-z.png
-        /reactions/\d+\.gif$                     # e.g. …/reactions/4.gif
+            /assets/image-placeholder-.*\.(?:png|jpe?g|webp)$   |   # placeholders
+            /reactions/\d+\.(?:gif|png|webp)$                   |   # reaction images
+            (?:^|//|://)            # start, proto‑relative, or normal scheme
+            [^/]*\boutbrainimg\.com/ # any sub‑domain, whole word match
         """,
         re.I | re.X,
     )
@@ -68,31 +70,16 @@ class TNP_Scraper(ST_Scraper):
                 else (soup.title.string.strip() if soup.title else "(untitled)")
             )
 
-            # ——— Published date (from the URL) ———
             pub_date = None
-            m = re.search(r"story(\d{8})", url)
-            if m:
-                try:
-                    # parse “YYYYMMDD” into a date and iso‑format it
-                    dt = dateparser.parse(m.group(1))
-                    pub_date = dt.date().isoformat()
-                except Exception:
-                    pub_date = None
+            time_tag = soup.find("time", {"data-testid": "date"}) or soup.find("time")
 
-            # ——— Fallback: scrape the on‑page <p data-testid="date"> ———
-            if not pub_date:
-                # assume you've already done: soup = BeautifulSoup(html, "html.parser")
-                date_tag = soup.find("p", {"data-testid": "date"})
-                if date_tag:
-                    # extract text like “01 Jul 2025 - 8:39 pm”
-                    raw = date_tag.get_text(" ", strip=True)
-                    try:
-                        dt2 = dateparser.parse(raw)
-                        # if you only want the date part:
-                        pub_date = dt2.date().isoformat()
-                        # or for full timestamp: pub_date = dt2.isoformat()
-                    except Exception:
-                        pub_date = None
+            if time_tag and time_tag.get_text(strip=True):
+                raw = time_tag.get_text(" ", strip=True)
+                try:
+                    dt = dateparser.parse(raw)
+                    pub_date = dt.isoformat() 
+                except Exception:
+                    pass
 
             # Extract and clean content
             content = self._clean_content(article)
@@ -164,7 +151,7 @@ def process_single_file(txt_file: pathlib.Path, OUT_DIR, ERR_DIR, SEEN_DIR, CONC
 
 def main():
     BASE_DIR = pathlib.Path("/workspace/eefun/webscraping/sitemap/sitemap_scrape/data/the_new_paper")
-    UNSEEN_DIR = BASE_DIR / "test"
+    UNSEEN_DIR = BASE_DIR / "unseen"
     SEEN_DIR = BASE_DIR / "seen"
     OUT_DIR = BASE_DIR / "scraped"
     ERR_DIR = BASE_DIR / "unsuccessful"
@@ -174,8 +161,8 @@ def main():
     OUT_DIR.mkdir(exist_ok=True, parents=True)
     ERR_DIR.mkdir(exist_ok=True, parents=True)
 
-    CONCURRENCY = 2
-    MAX_PARALLEL_TXT_FILES = 2  # Number of files to process in parallel
+    CONCURRENCY = 15
+    MAX_PARALLEL_TXT_FILES = 4  # Number of files to process in parallel
 
     txt_files = list(UNSEEN_DIR.glob("*.txt"))
     if not txt_files:

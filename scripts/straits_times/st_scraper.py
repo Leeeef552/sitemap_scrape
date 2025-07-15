@@ -92,12 +92,12 @@ class ST_Scraper:
             raise RuntimeError("Browser not started. Use 'async with'.")
         
         async with self.semaphore:
-            await asyncio.sleep(random.uniform(0.1, 0.75))
+            await asyncio.sleep(random.uniform(0.05, 0.2))
             context = await self._get_available_context()
             page = await context.new_page()
             try:
-                await page.goto(url, wait_until="domcontentloaded", timeout=45000)  # Reduced timeout
-                await page.wait_for_selector("article", timeout=45000)
+                await page.goto(url, wait_until="domcontentloaded", timeout=30000)  # Reduced timeout
+                await page.wait_for_selector("article", timeout=30000)
                 
                 html = await page.content()
                 logger.debug(f"Successfully fetched content from {url}")
