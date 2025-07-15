@@ -13,7 +13,7 @@ YEAR_FEED_RE = re.compile(r"[?&]year=(\d{4})$")
 
 
 @dataclass
-class XMLScraper:
+class BH_XMLScraper:
     index_url: str
     out_dir: Path | str = "./data/beritaharian"
     timeout: float = 15.0
@@ -104,7 +104,7 @@ class XMLScraper:
 
 
 if __name__ == "__main__":
-    scraper = XMLScraper(
+    scraper = BH_XMLScraper(
         index_url="https://www.beritaharian.sg/sitemap.xml",
         out_dir="/workspace/eefun/webscraping/sitemap/sitemap_scrape/data/barita_harian/unseen",
         timeout=30.0,
