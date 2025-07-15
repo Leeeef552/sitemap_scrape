@@ -125,8 +125,8 @@ def main() -> None:
     for d in (UNSEEN_DIR, SEEN_DIR, OUT_DIR, ERR_DIR):
         d.mkdir(parents=True, exist_ok=True)
 
-    CONCURRENCY_IN_FILE    = 20
-    MAX_PARALLEL_TXT_FILES = 4
+    CONCURRENCY_IN_FILE    = 8
+    MAX_PARALLEL_TXT_FILES = 1
 
     txt_files = list(UNSEEN_DIR.glob("*.txt"))
     if not txt_files:

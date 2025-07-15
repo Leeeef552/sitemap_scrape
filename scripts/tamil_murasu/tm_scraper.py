@@ -9,6 +9,30 @@ from ...utils.logger import logger
 from ..straits_times.st_scraper import ST_Scraper, process_txt_async
 
 class TM_SCraper(ST_Scraper):
+    def _pick_largest_from_srcset(self, srcset: str) -> str:
+        best_url = None
+        best_w   = -1
+
+        for candidate in srcset.split(","):
+            candidate = candidate.strip()
+            if not candidate:
+                continue
+
+            # split on whitespace → ["https://…", "500w"]
+            parts = candidate.split()
+            url   = parts[0]
+            w     = -1
+            if len(parts) > 1 and parts[1].endswith("w"):
+                try:
+                    w = int(parts[1][:-1])
+                except ValueError:
+                    pass       # keep w = -1 for weird cases
+
+            if w > best_w:     # strictly keep the widest
+                best_url, best_w = url, w
+
+        return best_url
+
 
     async def scrape_single_url(self, url: str) -> Dict[str, Any]:
         """Scrape a single URL for article content, metadata, images, and generate summary."""
@@ -65,29 +89,41 @@ class TM_SCraper(ST_Scraper):
             # Extract and clean content
             content = self._clean_content(article)
 
-            images: List[Dict[str, Any]] = []
+            images = []
+            seen   = set()
 
-            # find every carousel wrapper whose class matches article-carousel-wrapper-<digits>
-            for wrapper in article.find_all("div", class_=re.compile(r"article-carousel-wrapper-\d+")):
-                # 1) the <a> tag’s href is the real image URL
-                a = wrapper.find("a", href=True)
-                if not a:
+            for img in article.find_all("img", src=True):
+                # 1) choose the best URL --------------------------------------
+                if "srcset" in img.attrs:
+                    largest = self._pick_largest_from_srcset(img["srcset"])
+                    img_url = urljoin(url, largest)
+                else:
+                    img_url = urljoin(url, img["src"])
+
+                if img_url in seen:          # de‑duplicate
                     continue
-                img_url = urljoin(url, a["href"])
+                seen.add(img_url)
 
-                # 2) alt text comes from the <img> inside that <a>
-                img_tag = a.find("img")
-                alt = img_tag.get("alt", "").strip() or None if img_tag else None
+                # 2) alt text --------------------------------------------------
+                alt = img.get("alt") or None
 
-                # 3) caption is in the div with data-testid="image-caption-wrapper"
-                cap_div = wrapper.find("div", {"data-testid": "image-caption-wrapper"})
-                caption = cap_div.get_text(" ", strip=True) or None if cap_div else None
+                # 3) try to pick up a caption nearby (two common layouts) -----
+                cap_div = img.find_parent().find(
+                    "div", {"data-testid": "image-caption-wrapper"}
+                )
+                if cap_div:
+                    caption = cap_div.get_text(" ", strip=True)
+                else:
+                    figcap = img.find_next("figcaption")
+                    caption = figcap.get_text(" ", strip=True) if figcap else None
 
-                images.append({
-                    "image_url": img_url,
-                    "alt_text":   alt,
-                    "caption":    caption,
-                })
+                images.append(
+                    {
+                        "image_url": img_url,
+                        "alt_text":  alt,
+                        "caption":   caption or None,
+                    }
+                )
 
             return {
                 "article_url":   url,
