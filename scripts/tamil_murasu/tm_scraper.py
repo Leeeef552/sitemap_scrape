@@ -159,7 +159,7 @@ def main():
     OUT_DIR.mkdir(exist_ok=True, parents=True)
     ERR_DIR.mkdir(exist_ok=True, parents=True)
 
-    CONCURRENCY = 10
+    CONCURRENCY = 15
     MAX_PARALLEL_TXT_FILES = 4  # Number of files to process in parallel
 
     txt_files = list(UNSEEN_DIR.glob("*.txt"))
@@ -179,7 +179,6 @@ def main():
             logger.info(result)
 
     logger.info("All files processed!")
-
 
 
 if __name__ == "__main__":
