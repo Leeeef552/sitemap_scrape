@@ -5,10 +5,10 @@ import json
 import shutil
 
 # Configuration: set the directory and threshold here
-ERROR_DIR = "/workspace/eefun/webscraping/sitemap/sitemap_scrape/data/business_times/unsuccessful"
-THRESHOLD = 10
-UNSEEN = "/workspace/eefun/webscraping/sitemap/sitemap_scrape/data/business_times/unseen"
-SEEN = "/workspace/eefun/webscraping/sitemap/sitemap_scrape/data/business_times/seen"
+ERROR_DIR = "/workspace/eefun/webscraping/sitemap/sitemap_scrape/data/the_new_paper/unsuccessful"
+THRESHOLD = 1
+UNSEEN = "/workspace/eefun/webscraping/sitemap/sitemap_scrape/data/the_new_paper/unseen"
+SEEN = "/workspace/eefun/webscraping/sitemap/sitemap_scrape/data/the_new_paper/seen"
 
 
 def count_lists(obj):

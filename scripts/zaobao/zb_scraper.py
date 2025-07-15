@@ -6,7 +6,7 @@ import asyncio, json, pathlib, traceback, random, re
 from tqdm.auto import tqdm
 from playwright.async_api import async_playwright, Browser, BrowserContext
 from ...utils.logger import logger
-from ..straits_times.st_scraper import ST_Scraper, process_txt_async
+from ...archive.st_scraper_1 import ST_Scraper, process_txt_async
 
 class ZB_Scraper(ST_Scraper):
 
