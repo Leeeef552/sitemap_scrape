@@ -1,4 +1,10 @@
 import logging
+import time
+import os
+
+# Tell the C library to switch the local timezone
+os.environ['TZ'] = 'Asia/Singapore'
+time.tzset()
 
 class CustomFormatter(logging.Formatter):
     simple_fmt = '[%(asctime)s] [%(levelname)s] %(message)s'

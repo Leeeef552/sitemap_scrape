@@ -161,13 +161,13 @@ def main():
     OUT_DIR.mkdir(exist_ok=True, parents=True)
     ERR_DIR.mkdir(exist_ok=True, parents=True)
 
-    CONCURRENCY = 20
-    MAX_PARALLEL_TXT_FILES = 5  # Number of files to process in parallel
-
     txt_files = list(UNSEEN_DIR.glob("*.txt"))
     if not txt_files:
         logger.warning(f"No .txt files found in {UNSEEN_DIR}")
         return
+    
+    CONCURRENCY = 50
+    MAX_PARALLEL_TXT_FILES = len(txt_files)  # Number of files to process in parallel
 
     logger.info(f"Found {len(txt_files)} files to process")
 

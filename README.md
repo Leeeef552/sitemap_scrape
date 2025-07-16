@@ -25,3 +25,22 @@ scraping sitemap news for htx
 ```bash
 CUDA_VISIBLE_DEVICES=0 vllm serve unsloth/Llama-3.2-3B-Instruct --port 8124 --gpu-memory-utilization 0.65 --chat-template /home/leeeefun681/volume/eefun/webscraping/sitemap/sitemap_scrape/utils/chat_template.jinja
 ``` -->
+
+
+# Scrape Details:
+
+## Straits Times:
+*Scraped Archive Time Frame:*
+- 09/2015 to 06/2025
+*Progress*
+- Completed
+*Number*
+
+## Business Times:
+*Scraped Archive Time Frame:*
+- 09/2013 to 06/2025
+
+## The New Paper:
+*Scraped Archive Time Frame:*
+- 2016 to 2025
+
