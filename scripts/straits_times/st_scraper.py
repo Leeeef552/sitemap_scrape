@@ -17,7 +17,7 @@ class ST_Scraper:
 
     def __init__(self, concurrency: int = 5):
         self.concurrency = concurrency
-        self.min_interval = 1
+        self.min_interval = 0.75
         self._last_request_ts = 0.0
         self._rate_lock = asyncio.Lock()
         self.semaphore = asyncio.Semaphore(concurrency)
