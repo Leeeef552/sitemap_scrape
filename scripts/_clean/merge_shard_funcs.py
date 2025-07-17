@@ -144,9 +144,9 @@ def shard_all_jsonl_files_in_dir(input_dir, output_dir=None, shards=4):
 
 
 # merge_and_shard_jsonl_by_year(
-#     "/workspace/eefun/webscraping/sitemap/sitemap_scrape/data/straits_times/scraped",
-#     "/workspace/eefun/webscraping/sitemap/sitemap_scrape/data/straits_times/temp2",
-#     shards=5
+#     "/workspace/eefun/webscraping/sitemap/backups/data_backup/zaobao/temp1",
+#     "/workspace/eefun/webscraping/sitemap/backups/data_backup/zaobao/temp2",
+#     shards=4
 # )
 
 # merge_errors_jsonl_by_year(
@@ -154,8 +154,8 @@ def shard_all_jsonl_files_in_dir(input_dir, output_dir=None, shards=4):
 #     "/workspace/eefun/webscraping/sitemap/sitemap_scrape/data/straits_times/temp"
 # )
 
-# shard_all_jsonl_files_in_dir(
-#     "/workspace/eefun/webscraping/sitemap/sitemap_scrape/data/business_times/scraped",
-#     "/workspace/eefun/webscraping/sitemap/sitemap_scrape/data/business_times/temp",
-#     shards=4
-# )
+shard_all_jsonl_files_in_dir(
+    "/workspace/eefun/webscraping/sitemap/sitemap_scrape/data/zaobao/scraped",
+    "/workspace/eefun/webscraping/sitemap/sitemap_scrape/data/zaobao/scraped/temp",
+    shards=4
+)
