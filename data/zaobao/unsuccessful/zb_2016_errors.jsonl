@@ -1,2 +1,3 @@
-["ERROR", "https://www.zaobao.com.sg/news/singapore/story20160511-1165816", "AttributeError(\"'NoneType' object has no attribute 'find'\")", "Traceback (most recent call last):\n  File \"/workspace/eefun/webscraping/sitemap/sitemap_scrape/scripts/zaobao/zb_scraper.py\", line 74, in scrape_single_url\n    article = soup.find(\"article\")\n              ^^^^^^^^^\nAttributeError: 'NoneType' object has no attribute 'find'\n"]
-["ERROR", "https://www.zaobao.com.sg/news/singapore/story20160404-1165815", "AttributeError(\"'NoneType' object has no attribute 'find'\")", "Traceback (most recent call last):\n  File \"/workspace/eefun/webscraping/sitemap/sitemap_scrape/scripts/zaobao/zb_scraper.py\", line 74, in scrape_single_url\n    article = soup.find(\"article\")\n              ^^^^^^^^^\nAttributeError: 'NoneType' object has no attribute 'find'\n"]
+version https://git-lfs.github.com/spec/v1
+oid sha256:2938ffb0ab49a00f8c476ab9205d3f70e57e501bc10ae674c942e6bace7bff51
+size 854
