@@ -96,6 +96,15 @@ These use Google News API with limitations:
 *Note: 2021 shows >100% due to duplicate resolution  
 Total: 773,348 articles | Success Rate: 99.3%*
 
+### Tabla (2023–2025)
+| Year | File Base   | TXT URLs | Scraped URLs | Error URLs | Unaccounted URLs | TXT Duplicates | Scraped Duplicates | Error Duplicates |
+|------|------------|----------|--------------|------------|------------------|----------------|--------------------|------------------|
+| 2023 | tabla_2023 | 623      | 622          | 5          | 0                | 0              | 0                  | 1                |
+| 2024 | tabla_2024 | 772      | 772          | 3          | 0                | 0              | 0                  | 0                |
+| 2025 | tabla_2025 | 572      | 572          | 0          | 0                | 0              | 0                  | 0                |
+
+*Total: 1,967 articles | Success Rate: 99.95%*
+
 ---
 
 ## ⚙️ Technical Details

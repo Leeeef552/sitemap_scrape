@@ -99,7 +99,7 @@ def compare_txt_jsonl(txt_dir, jsonl_dir, errors_dir):
 
 # Example usage
 
-outlet = "zaobao"
+outlet = "tabla"
 
 compare_txt_jsonl(
     txt_dir=f'/workspace/eefun/webscraping/sitemap/sitemap_scrape/data/{outlet}/seen',
